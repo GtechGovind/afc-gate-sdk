@@ -1,0 +1,31 @@
+complexity:
+  LongMethod:
+    active: true
+    allowedLines: 80
+  LongParameterList:
+    active: true
+    allowedFunctionParameters: 7
+    allowedConstructorParameters: 10
+  CyclomaticComplexMethod:
+    active: true
+    allowedComplexity: 14
+    ignoreSingleWhenExpression: true
+  TooManyFunctions:
+    active: true
+    allowedFunctionsPerFile: 30
+    allowedFunctionsPerClass: 30
+    allowedFunctionsPerInterface: 30
+    allowedFunctionsPerObject: 30
+    allowedFunctionsPerEnum: 30
+
+style:
+  MagicNumber:
+    active: false
+  MaxLineLength:
+    active: true
+    maxLineLength: 140
+    excludeCommentStatements: true
+  ReturnCount:
+    active: true
+    max: 4
+    excludeGuardClauses: true

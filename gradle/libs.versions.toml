@@ -1,0 +1,22 @@
+[versions]
+kotlin = "2.4.10"
+coroutines = "1.11.0"
+datetime = "0.8.0"
+jserialcomm = "2.11.4"
+dokka = "2.2.0"
+ktlint-plugin = "14.2.0"
+detekt = "2.0.0-alpha.6"
+kover = "0.9.9"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
+jserialcomm = { module = "com.fazecast:jSerialComm", version.ref = "jserialcomm" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-plugin" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }

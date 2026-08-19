@@ -1,0 +1,226 @@
+package com.qurkos.gate.sdk
+
+import com.qurkos.gate.sdk.internal.GateOperation
+import com.qurkos.gate.sdk.internal.SerialSession
+import com.qurkos.gate.sdk.internal.SerialTransaction
+import com.qurkos.gate.sdk.internal.SerialTransport
+import com.qurkos.gate.sdk.internal.SerialTransportState
+import com.qurkos.gate.sdk.internal.puloon.PuloonAdapter
+import com.qurkos.gate.sdk.internal.puloon.PuloonFrame
+import com.qurkos.gate.sdk.internal.puloon.PuloonFrameCodec
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+
+class SerialSessionTest {
+    @Test
+    fun idempotentReadRetriesWithSameSequenceAndIncrementedAttempt() =
+        runBlocking {
+            var calls = 0
+            val transport =
+                TestSerialTransport { request, fake ->
+                    calls += 1
+                    if (calls == 2) fake.respond(request, "V0001.23".encodeToByteArray())
+                }
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 2)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+
+            val transaction =
+                assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Firmware)).value
+            assertIs<GateResult.Success<*>>(session.transact(transaction))
+
+            val frames = transport.writes.map(PuloonFrameCodec::decode)
+            assertEquals(2, frames.size)
+            assertEquals(frames.first().sequence, frames.last().sequence)
+            assertEquals(listOf(0, 1), frames.map(PuloonFrame::retry))
+            session.disconnect()
+            Unit
+        }
+
+    @Test
+    fun reconnectDoesNotReplaySuccessfulStateChangingCommand() =
+        runBlocking {
+            val transport =
+                TestSerialTransport { request, fake ->
+                    fake.respond(request, byteArrayOf(request.command, '0'.code.toByte(), '0'.code.toByte()))
+                }
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 0, reconnect = true)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            val passage =
+                assertIs<GateResult.Success<SerialTransaction>>(
+                    adapter.transaction(GateOperation.Passage(GatePassageRequest(GateDirection.ENTRY))),
+                ).value
+            assertIs<GateResult.Success<*>>(session.transact(passage))
+
+            transport.fail()
+            withTimeout(2.seconds) {
+                while (transport.openCount < 2) delay(10.milliseconds)
+            }
+
+            assertEquals(1, transport.writes.size)
+            session.disconnect()
+            Unit
+        }
+
+    @Test
+    fun explicitConnectCancelsPendingAutomaticReconnect() =
+        runBlocking {
+            val transport = TestSerialTransport()
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session =
+                SerialSession(
+                    serialConfig = SerialConnectionConfig(SerialPortName("fake"), adapter.defaultSerialParameters),
+                    runtime =
+                        GateRuntimeOptions(
+                            responseTimeout = 30.milliseconds,
+                            readRetries = 0,
+                            statusPollInterval = null,
+                            reconnectPolicy = ReconnectPolicy.ExponentialBackoff(200.milliseconds, 200.milliseconds),
+                        ),
+                    adapter = adapter,
+                    transport = transport,
+                    eventSink = {},
+                    dispatcher = Dispatchers.Default,
+                )
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            transport.fail()
+            withTimeout(2.seconds) {
+                while (session.connectionState.value != GateConnectionState.RECONNECTING) delay(10.milliseconds)
+            }
+
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            delay(300.milliseconds)
+
+            assertEquals(2, transport.openCount)
+            session.disconnect()
+            Unit
+        }
+
+    @Test
+    fun initialOpenFailureRecoversWithoutCallerCommandReplay() =
+        runBlocking {
+            val transport = TestSerialTransport(openFailuresRemaining = 1)
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 0, reconnect = true)
+
+            assertIs<GateResult.Failure>(session.connect())
+            withTimeout(2.seconds) {
+                while (session.connectionState.value != GateConnectionState.CONNECTED) delay(10.milliseconds)
+            }
+
+            assertEquals(2, transport.openCount)
+            assertEquals(0, transport.writes.size)
+            session.disconnect()
+            Unit
+        }
+
+    @Test
+    fun callerCancellationStopsReadRetriesImmediately() =
+        runBlocking {
+            val transport = TestSerialTransport()
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 10)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            val transaction = assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Firmware)).value
+
+            assertFailsWith<TimeoutCancellationException> {
+                withTimeout(10.milliseconds) { session.transact(transaction) }
+            }
+
+            assertEquals(1, transport.writes.size)
+            session.disconnect()
+            Unit
+        }
+
+    private fun createSession(
+        transport: TestSerialTransport,
+        adapter: PuloonAdapter,
+        readRetries: Int,
+        reconnect: Boolean = false,
+    ): SerialSession =
+        SerialSession(
+            serialConfig = SerialConnectionConfig(SerialPortName("fake"), adapter.defaultSerialParameters),
+            runtime =
+                GateRuntimeOptions(
+                    responseTimeout = 30.milliseconds,
+                    readRetries = readRetries,
+                    statusPollInterval = null,
+                    reconnectPolicy =
+                        if (reconnect) {
+                            ReconnectPolicy.ExponentialBackoff(10.milliseconds, 20.milliseconds)
+                        } else {
+                            ReconnectPolicy.Disabled
+                        },
+                ),
+            adapter = adapter,
+            transport = transport,
+            eventSink = {},
+            dispatcher = Dispatchers.Default,
+        )
+}
+
+internal class TestSerialTransport(
+    private var openFailuresRemaining: Int = 0,
+    private val responder: suspend (PuloonFrame, TestSerialTransport) -> Unit = { _, _ -> },
+) : SerialTransport {
+    private val incomingChannel = Channel<ByteArray>(Channel.UNLIMITED)
+    private val mutableState = MutableStateFlow(SerialTransportState.CLOSED)
+
+    override val incoming: Flow<ByteArray> = incomingChannel.receiveAsFlow()
+    override val state: StateFlow<SerialTransportState> = mutableState.asStateFlow()
+    val writes = mutableListOf<ByteArray>()
+    var openCount = 0
+        private set
+
+    override suspend fun open(config: SerialConnectionConfig) {
+        openCount += 1
+        if (openFailuresRemaining > 0) {
+            openFailuresRemaining -= 1
+            mutableState.value = SerialTransportState.FAILED
+            error("Simulated open failure")
+        }
+        mutableState.value = SerialTransportState.OPEN
+    }
+
+    override suspend fun close() {
+        mutableState.value = SerialTransportState.CLOSED
+    }
+
+    override suspend fun write(bytes: ByteArray) {
+        writes += bytes.copyOf()
+        responder(PuloonFrameCodec.decode(bytes), this)
+    }
+
+    suspend fun respond(
+        request: PuloonFrame,
+        payload: ByteArray,
+    ) {
+        incomingChannel.send(
+            PuloonFrameCodec.encode(PuloonFrame(request.sequence, request.retry, payload)),
+        )
+    }
+
+    suspend fun sendRaw(bytes: ByteArray) {
+        incomingChannel.send(bytes.copyOf())
+    }
+
+    fun fail() {
+        mutableState.value = SerialTransportState.FAILED
+    }
+}

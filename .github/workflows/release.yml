@@ -64,7 +64,19 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: ./gradlew --no-daemon publish
+        shell: bash
+        run: |
+          set +e
+          ./gradlew --no-daemon publish 2>&1 | tee publish.log
+          publish_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$publish_status" -ne 0 ]]; then
+            if grep -q "Received status code 409 from server: Conflict" publish.log; then
+              echo "SDK version $GITHUB_REF_NAME is already present in GitHub Packages."
+            else
+              exit "$publish_status"
+            fi
+          fi
 
       - name: Stage SDK and compiled UI JARs
         shell: bash

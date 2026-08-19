@@ -146,6 +146,19 @@ publishing {
         pom {
             name.set("AFC Gate SDK")
             description.set("Unified Kotlin API for serial AFC gate controllers")
+            url.set("https://github.com/GtechGovind/afc-gate-sdk")
+            licenses {
+                license {
+                    name.set("Apache License, Version 2.0")
+                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                    distribution.set("repo")
+                }
+            }
+            scm {
+                connection.set("scm:git:https://github.com/GtechGovind/afc-gate-sdk.git")
+                developerConnection.set("scm:git:ssh://git@github.com/GtechGovind/afc-gate-sdk.git")
+                url.set("https://github.com/GtechGovind/afc-gate-sdk")
+            }
         }
     }
 }

@@ -38,6 +38,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -92,6 +94,11 @@ jobs:
             sha256sum "$file" > "$file.sha256"
           done
 
+      - name: Attest JAR artifacts
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: release-assets/*
+
       - name: Upload JARs directly to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -118,6 +125,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -137,6 +146,11 @@ jobs:
             $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
             "$hash  $($_.Name)" | Set-Content -NoNewline "$($_.FullName).sha256"
           }
+
+      - name: Attest native installer
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: control-panel/build/compose/binaries/main/${{ matrix.format }}/*
 
       - name: Upload installer directly to release
         env:

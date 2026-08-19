@@ -41,3 +41,7 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+# Vendor protocol documents are intentionally kept outside the public repository.
+/docs/PULOON_GCU.pdf
+/docs/GCU.pdf

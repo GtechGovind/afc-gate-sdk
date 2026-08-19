@@ -1,6 +1,9 @@
 # Puloon GCU
 
-The Puloon implementation follows the bundled [GCU protocol specification](PULOON_GCU.pdf). It is internal; applications create it by selecting `GateVendor.PULOON` and continue using the common `Gate` interface.
+The Puloon implementation targets the GCU interface. Vendor specifications are
+not redistributed in this repository; contributors must obtain them through an
+authorized vendor or integration channel. The adapter is internal: applications
+select `GateVendor.PULOON` and continue using the common `Gate` interface.
 
 ## Connection
 

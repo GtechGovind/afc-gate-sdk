@@ -10,6 +10,7 @@ diagnostics, and lifecycle through one vendor-neutral interface.
 [![CI](https://github.com/GtechGovind/afc-gate-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/GtechGovind/afc-gate-sdk/actions/workflows/ci.yml)
 [![Kotlin](https://img.shields.io/badge/Kotlin-Multiplatform-7f52ff?logo=kotlin&logoColor=white)](https://kotlinlang.org/docs/multiplatform.html)
 [![JVM](https://img.shields.io/badge/JVM-17%2B-e76f00?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/17/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-0b7285.svg)](LICENSE)
 [![API](https://img.shields.io/badge/public_API-com.qurkos.gate.sdk-2563eb)](#public-api)
 [![Tests](https://img.shields.io/badge/tests-51_passing-16a34a)](#build-and-verify)
 [![Coverage](https://img.shields.io/badge/line_coverage-93.52%25-16a34a)](#build-and-verify)
@@ -293,8 +294,9 @@ and excluded from ABI validation.
 | Gunnebo | Reserved adapter boundary | 🧭 Protocol specification required |
 | Indra | Reserved adapter boundary | 🧭 Protocol specification required |
 
-See [Puloon protocol coverage](docs/PULOON.md) and the source
-[GCU protocol reference](docs/PULOON_GCU.pdf).
+See [Puloon protocol coverage](docs/PULOON.md). Vendor protocol documents are
+not redistributed by this repository; contributors must obtain specifications
+through an authorized vendor or integration channel.
 
 ## Build and verify
 
@@ -318,6 +320,14 @@ The verification gate includes:
 - JVM and Kotlin Multiplatform Maven publications
 
 Generated API documentation is written to `build/documentation/html`.
+
+## License
+
+Copyright 2026 Govind Yadav and contributors.
+
+Licensed under the [Apache License 2.0](LICENSE). Puloon, Gunnebo, Indra, and
+other product names remain trademarks of their respective owners. The license
+does not grant rights to redistribute third-party protocol specifications.
 
 ## Repository map
 

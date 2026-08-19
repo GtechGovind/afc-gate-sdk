@@ -15,7 +15,7 @@ such as `-SNAPSHOT`.
 5. Test the locally published coordinate from the Gate application.
 6. Commit, create an annotated `MAJOR.MINOR.PATCH` tag, and push the tag.
 7. The release workflow revalidates the tag/version, reruns all gates, publishes the SDK to GitHub Packages, generates
-   SHA-256 checksums for every artifact, and
+   SHA-256 checksums and build-provenance attestations for every artifact, and
    creates a GitHub release containing the SDK JARs, the compiled control-panel JAR, and native DMG, MSI, and DEB installers.
    The control-panel JAR is a release download only and is not published as a Maven package.
 8. Promote/deploy only after a consumer smoke test and any required HIL certification.

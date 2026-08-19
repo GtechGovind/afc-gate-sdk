@@ -9,13 +9,37 @@ permissions:
   contents: read
 
 jobs:
+  prepare-release:
+    name: Prepare draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create or reuse draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --draft=true
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
+          fi
+
   sdk:
     name: Verify and publish SDK
+    needs: prepare-release
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
-      contents: read
+      contents: write
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -37,29 +61,34 @@ jobs:
       - name: Clean and verify release
         run: ./gradlew --no-daemon clean check dokkaHtmlJar assemble :control-panel:jar publishToMavenLocal
 
-      - name: Publish to GitHub Packages
+      - name: Publish SDK to GitHub Packages
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: ./gradlew --no-daemon publish
 
-      - name: Stage SDK release assets
+      - name: Stage SDK and compiled UI JARs
         shell: bash
         run: |
           mkdir -p release-assets
           cp build/libs/* release-assets/
           cp control-panel/build/libs/afc-gate-control-panel-*.jar release-assets/
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Attest JAR artifacts
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
-          name: sdk-artifacts
-          path: release-assets/
-          if-no-files-found: error
-          retention-days: 30
+          subject-path: release-assets/*
+
+      - name: Upload JARs directly to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
 
   control-panel:
     name: Package control panel (${{ matrix.format }})
+    needs: prepare-release
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +104,10 @@ jobs:
             format: deb
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -82,38 +115,35 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
       - name: Test and package desktop application
         shell: bash
         run: ./gradlew --no-daemon :control-panel:test :control-panel:${{ matrix.task }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: control-panel-${{ matrix.format }}
-          path: control-panel/build/compose/binaries/main/${{ matrix.format }}/*
-          if-no-files-found: error
-          retention-days: 30
 
-  release:
+      - name: Attest native installer
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: control-panel/build/compose/binaries/main/${{ matrix.format }}/*
+
+      - name: Upload installer directly to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" control-panel/build/compose/binaries/main/${{ matrix.format }}/* --clobber
+
+  finalize-release:
     name: Publish GitHub release
     needs:
       - sdk
       - control-panel
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: write
-      id-token: write
-      attestations: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: release-assets
-          merge-multiple: true
-      - name: Attest release artifacts
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
-        with:
-          subject-path: release-assets/*
-      - name: Create GitHub release
+      - name: Publish verified release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --verify-tag
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest

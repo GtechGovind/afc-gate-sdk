@@ -58,10 +58,6 @@ compose.desktop {
     }
 }
 
-dependencyLocking {
-    lockAllConfigurations()
-}
-
 tasks.test {
     useJUnitPlatform()
 }

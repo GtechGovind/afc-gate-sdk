@@ -62,6 +62,32 @@ val eventJob = scope.launch {
 Collectors should start before `connect()` if the application must observe the initial transition. Use an application-owned
 structured scope and cancel those jobs when the gate-owning component stops.
 
+### Live command traffic
+
+The same `events` flow publishes `GateEvent.CommandSent` and `GateEvent.ResponseReceived` around every serialized SDK
+operation, including connection, background status polling, diagnostics, settings, and passage commands. Correlate the two
+events by `sequence`; `ResponseReceived` includes the normalized `outcome`, elapsed duration, and a safe semantic detail.
+
+```kotlin
+gate.events.collect { event ->
+    when (event) {
+        is GateEvent.CommandSent -> trafficLog.tx(event.sequence, event.command, event.detail)
+        is GateEvent.ResponseReceived -> trafficLog.rx(
+            sequence = event.sequence,
+            command = event.command,
+            outcome = event.outcome,
+            elapsed = event.elapsed,
+            detail = event.detail,
+        )
+        else -> Unit
+    }
+}
+```
+
+The feed is observational and deliberately contains no raw frame bytes or vendor command values. Applications must continue
+to invoke operations through `Gate` and use the returned `GateResult` as the authoritative command result. Bound any UI or
+in-memory history and persist traffic only under the application's own retention and access-control policy.
+
 ## Status polling
 
 Background status polling is enabled by default. Choose an interval that meets application freshness requirements without

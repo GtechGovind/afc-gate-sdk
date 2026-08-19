@@ -354,4 +354,64 @@ public sealed interface GateEvent {
         /** One-based reconnect attempt number. */
         public val attempt: Int,
     ) : GateEvent
+
+    /** A semantic SDK command was accepted for serialized transmission. */
+    public data class CommandSent(
+        /** Monotonic identifier used to correlate the response. */
+        public val sequence: Long,
+        /** Vendor-neutral operation being sent. */
+        public val command: GateCommand,
+        /** Human-readable typed request summary without raw protocol bytes. */
+        public val detail: String,
+        /** Wall-clock time at which the command entered the serial execution path. */
+        public val at: Instant,
+    ) : GateEvent
+
+    /** The serial execution path completed for a previously emitted [CommandSent]. */
+    public data class ResponseReceived(
+        /** Correlation identifier copied from [CommandSent.sequence]. */
+        public val sequence: Long,
+        /** Vendor-neutral operation that completed. */
+        public val command: GateCommand,
+        /** Whether the response completed successfully. */
+        public val outcome: GateCommandOutcome,
+        /** Human-readable normalized response or error summary. */
+        public val detail: String,
+        /** Total serialized operation latency, including retries and response decoding. */
+        public val elapsed: Duration,
+        /** Wall-clock time at which execution completed. */
+        public val at: Instant,
+    ) : GateEvent
+}
+
+/** Semantic command names exposed for safe traffic monitoring without protocol wire access. */
+public enum class GateCommand {
+    CONNECT,
+    DISCONNECT,
+    FIRMWARE,
+    PASSAGE,
+    EMERGENCY,
+    INITIALIZE,
+    STATUS,
+    SET_PASS_MODE,
+    SET_SAFETY_REGION,
+    CLEAR_PASSAGE_COUNTERS,
+    SENSORS,
+    READ_CLOCK,
+    SET_CLOCK,
+    SET_UPS_SHUTDOWN_DELAY,
+    READ_STANDBY_POLICY,
+    SET_STANDBY_POLICY,
+    READ_DOOR_TIMING,
+    SET_DOOR_TIMING,
+    READ_SETTINGS,
+    APPLY_SETTINGS,
+    DIAGNOSTIC,
+    RESET,
+}
+
+/** Terminal result classification for [GateEvent.ResponseReceived]. */
+public enum class GateCommandOutcome {
+    SUCCESS,
+    FAILURE,
 }

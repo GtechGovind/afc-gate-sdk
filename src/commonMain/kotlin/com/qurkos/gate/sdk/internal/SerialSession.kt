@@ -88,6 +88,7 @@ internal class SerialSession(
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val lifecycleMutex = Mutex()
     private val commandMutex = Mutex()
+    private val reconnectMutex = Mutex()
     private val frames =
         Channel<ProtocolFrame>(
             capacity = FRAME_BUFFER_CAPACITY,
@@ -258,25 +259,27 @@ internal class SerialSession(
     }
 
     /** Launches at most one bounded-backoff reconnect loop. */
-    private fun scheduleReconnect() {
-        if (intentionalDisconnect || reconnectJob?.isActive == true) return
-        val policy = runtime.reconnectPolicy
-        if (policy is ReconnectPolicy.Disabled) return
-        check(policy is ReconnectPolicy.ExponentialBackoff)
-        reconnectJob =
-            scope.launch {
-                updateConnectionState(GateConnectionState.RECONNECTING)
-                var attempt = 0
-                var wait = policy.initialDelay
-                while (isActive && !intentionalDisconnect) {
-                    attempt += 1
-                    eventSink(GateEvent.ReconnectAttempt(attempt))
-                    delay(wait)
-                    val result = openTransport()
-                    if (result is GateResult.Success) return@launch
-                    wait = nextDelay(wait, policy)
+    private suspend fun scheduleReconnect() {
+        reconnectMutex.withLock {
+            if (intentionalDisconnect || reconnectJob?.isActive == true) return
+            val policy = runtime.reconnectPolicy
+            if (policy is ReconnectPolicy.Disabled) return
+            check(policy is ReconnectPolicy.ExponentialBackoff)
+            reconnectJob =
+                scope.launch {
+                    updateConnectionState(GateConnectionState.RECONNECTING)
+                    var attempt = 0
+                    var wait = policy.initialDelay
+                    while (isActive && !intentionalDisconnect) {
+                        attempt += 1
+                        eventSink(GateEvent.ReconnectAttempt(attempt))
+                        delay(wait)
+                        val result = openTransport()
+                        if (result is GateResult.Success) return@launch
+                        wait = nextDelay(wait, policy)
+                    }
                 }
-            }
+        }
     }
 
     /** Calculates the next finite reconnect delay and clamps it to the policy maximum. */

@@ -4,10 +4,13 @@ import com.qurkos.gate.sdk.internal.SerialGateController
 import com.qurkos.gate.sdk.internal.puloon.PuloonAdapter
 import com.qurkos.gate.sdk.internal.puloon.PuloonFrameCodec
 import com.qurkos.gate.sdk.internal.puloon.ascii
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -15,6 +18,22 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 class GateContractTest {
+    @Test
+    fun emitsCorrelatedSemanticCommandAndResponseTraffic() =
+        runBlocking {
+            val gate = createGate(TestSerialTransport(), GateHardwareProfile())
+            val events = async(start = CoroutineStart.UNDISPATCHED) { gate.events.take(2).toList() }
+
+            assertIs<GateResult.Success<Unit>>(gate.connect())
+
+            val sent = assertIs<GateEvent.CommandSent>(events.await()[0])
+            val received = assertIs<GateEvent.ResponseReceived>(events.await()[1])
+            assertEquals(GateCommand.CONNECT, sent.command)
+            assertEquals(sent.sequence, received.sequence)
+            assertEquals(GateCommandOutcome.SUCCESS, received.outcome)
+            gate.disconnect()
+        }
+
     @Test
     fun oneGateInterfaceSendsEntryExitInvalidTicketAndEmergency() =
         runBlocking {

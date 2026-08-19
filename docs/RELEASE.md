@@ -13,9 +13,10 @@ such as `-SNAPSHOT`.
 3. Run `./gradlew clean` followed by `./gradlew check dokkaGeneratePublicationHtml publishToMavenLocal`.
 4. Inspect generated POM/module metadata, compiled JAR, sources JAR, and Javadoc/Dokka JAR.
 5. Test the locally published coordinate from the Gate application.
-6. Commit, create an annotated `vMAJOR.MINOR.PATCH` tag, and push the tag.
+6. Commit, create an annotated `MAJOR.MINOR.PATCH` tag, and push the tag.
 7. The release workflow revalidates the tag/version, reruns all gates, publishes to GitHub Packages, attests artifacts, and
-   creates a GitHub release.
+   creates a GitHub release containing the SDK JARs, the compiled control-panel JAR, and native DMG, MSI, and DEB installers.
+   The control-panel JAR is a release download only and is not published as a Maven package.
 8. Promote/deploy only after a consumer smoke test and any required HIL certification.
 
 Do not rebuild an already released version. If an artifact is wrong, publish a new patch version so provenance and caches

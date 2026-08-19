@@ -3,6 +3,8 @@ package com.qurkos.gate.sdk.internal
 import com.qurkos.gate.sdk.Gate
 import com.qurkos.gate.sdk.GateCapability
 import com.qurkos.gate.sdk.GateClock
+import com.qurkos.gate.sdk.GateCommand
+import com.qurkos.gate.sdk.GateCommandOutcome
 import com.qurkos.gate.sdk.GateConnectionState
 import com.qurkos.gate.sdk.GateDeviceConfig
 import com.qurkos.gate.sdk.GateDiagnostic
@@ -27,6 +29,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Clock
+import kotlin.time.TimeSource
 
 /**
  * Sole implementation of the public [Gate] contract.
@@ -43,6 +47,7 @@ internal class SerialGateController(
     private val mutableStatus = MutableStateFlow<GateStatus?>(null)
     private val mutableEvents = MutableSharedFlow<GateEvent>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
     private val operationMutex = Mutex()
+    private var traceSequence = 0L
     private val session =
         SerialSession(
             serialConfig = config.serial,
@@ -61,14 +66,26 @@ internal class SerialGateController(
 
     /** Connects the shared session and starts optional monitoring exactly once. */
     override suspend fun connect(): GateResult<Unit> {
-        val result = session.connect()
+        val result =
+            trace(
+                command = GateCommand.CONNECT,
+                requestDetail = "Open serial session",
+                successDetail = { "Serial session connected" },
+                block = session::connect,
+            )
         session.startMonitoring { refreshStatus() }
         return result
     }
 
     /** Disconnects the session and invalidates the last status snapshot. */
     override suspend fun disconnect(): GateResult<Unit> {
-        val result = session.disconnect()
+        val result =
+            trace(
+                command = GateCommand.DISCONNECT,
+                requestDetail = "Close serial session",
+                successDetail = { "Serial session disconnected" },
+                block = session::disconnect,
+            )
         mutableStatus.value = null
         return result
     }
@@ -196,14 +213,54 @@ internal class SerialGateController(
         capability: GateCapability,
     ): GateResult<GateResponse> =
         operationMutex.withLock {
-            if (capability !in capabilities) {
-                return@withLock GateResult.Failure(GateError.UnsupportedCapability(capability))
-            }
-            when (val transaction = adapter.transaction(operation)) {
-                is GateResult.Success -> session.transact(transaction.value)
-                is GateResult.Failure -> transaction
+            trace(
+                command = operation.command,
+                requestDetail = operation.requestDetail,
+                successDetail = { it.responseDetail() },
+            ) {
+                if (capability !in capabilities) {
+                    return@trace GateResult.Failure(GateError.UnsupportedCapability(capability))
+                }
+                when (val transaction = adapter.transaction(operation)) {
+                    is GateResult.Success -> session.transact(transaction.value)
+                    is GateResult.Failure -> transaction
+                }
             }
         }
+
+    /** Emits a bounded, observational TX/RX pair around one serialized SDK operation. */
+    private suspend fun <T> trace(
+        command: GateCommand,
+        requestDetail: String,
+        successDetail: (T) -> String,
+        block: suspend () -> GateResult<T>,
+    ): GateResult<T> {
+        val sequence = ++traceSequence
+        val started = TimeSource.Monotonic.markNow()
+        mutableEvents.emit(GateEvent.CommandSent(sequence, command, requestDetail, Clock.System.now()))
+        val result = block()
+        val outcome =
+            when (result) {
+                is GateResult.Success -> GateCommandOutcome.SUCCESS
+                is GateResult.Failure -> GateCommandOutcome.FAILURE
+            }
+        val detail =
+            when (result) {
+                is GateResult.Success -> successDetail(result.value)
+                is GateResult.Failure -> result.error.traceDetail()
+            }
+        mutableEvents.emit(
+            GateEvent.ResponseReceived(
+                sequence = sequence,
+                command = command,
+                outcome = outcome,
+                detail = detail,
+                elapsed = started.elapsedNow(),
+                at = Clock.System.now(),
+            ),
+        )
+        return result
+    }
 
     /** Preserves failures and rejects a successful response of the wrong normalized variant. */
     private fun <T> GateResult<GateResponse>.mapExpected(extract: (GateResponse) -> T?): GateResult<T> =
@@ -218,6 +275,98 @@ internal class SerialGateController(
                 }
             }
         }
+
+    private val GateOperation.command: GateCommand
+        get() =
+            when (this) {
+                GateOperation.Firmware -> GateCommand.FIRMWARE
+                is GateOperation.Passage -> GateCommand.PASSAGE
+                is GateOperation.Emergency -> GateCommand.EMERGENCY
+                GateOperation.Initialize -> GateCommand.INITIALIZE
+                GateOperation.Status -> GateCommand.STATUS
+                is GateOperation.SetPassMode -> GateCommand.SET_PASS_MODE
+                is GateOperation.SetSafetyRegion -> GateCommand.SET_SAFETY_REGION
+                GateOperation.ClearPassageCounters -> GateCommand.CLEAR_PASSAGE_COUNTERS
+                GateOperation.Sensors -> GateCommand.SENSORS
+                GateOperation.ReadClock -> GateCommand.READ_CLOCK
+                is GateOperation.SetClock -> GateCommand.SET_CLOCK
+                is GateOperation.SetUpsShutdownDelay -> GateCommand.SET_UPS_SHUTDOWN_DELAY
+                GateOperation.ReadStandbyPolicy -> GateCommand.READ_STANDBY_POLICY
+                is GateOperation.SetStandbyPolicy -> GateCommand.SET_STANDBY_POLICY
+                GateOperation.ReadDoorTiming -> GateCommand.READ_DOOR_TIMING
+                is GateOperation.SetDoorTiming -> GateCommand.SET_DOOR_TIMING
+                GateOperation.ReadSettings -> GateCommand.READ_SETTINGS
+                is GateOperation.ApplySettings -> GateCommand.APPLY_SETTINGS
+                is GateOperation.Diagnostic -> GateCommand.DIAGNOSTIC
+                GateOperation.Reset -> GateCommand.RESET
+            }
+
+    private val GateOperation.requestDetail: String
+        get() =
+            when (this) {
+                GateOperation.Firmware -> "Read firmware identity"
+                is GateOperation.Passage ->
+                    "${request.direction.name.lowercase().replaceFirstChar(Char::uppercase)} · " +
+                        "${request.passengerCount} passenger${if (request.passengerCount == 1) "" else "s"} · " +
+                        if (request.invalidTicket) "reject" else "authorize"
+                is GateOperation.Emergency -> if (enabled) "Engage emergency release" else "Clear emergency release"
+                GateOperation.Initialize -> "Initialize controller"
+                GateOperation.Status -> "Read normalized status"
+                is GateOperation.SetPassMode -> "Set passage mode to ${mode.name.displayName()}"
+                is GateOperation.SetSafetyRegion -> "Select safety region ${region.number}"
+                GateOperation.ClearPassageCounters -> "Clear entry and exit counters"
+                GateOperation.Sensors -> "Read physical sensor inputs"
+                GateOperation.ReadClock -> "Read controller RTC"
+                is GateOperation.SetClock -> "Synchronize controller RTC"
+                is GateOperation.SetUpsShutdownDelay -> "Set UPS shutdown delay to $seconds s"
+                GateOperation.ReadStandbyPolicy -> "Read standby policy"
+                is GateOperation.SetStandbyPolicy ->
+                    "Set standby to ${policy.timeout.inWholeSeconds} s · ${policy.passMode.name.displayName()}"
+                GateOperation.ReadDoorTiming -> "Read door timing"
+                is GateOperation.SetDoorTiming ->
+                    "Set opening ${timing.openingDelay.inWholeMilliseconds} ms · " +
+                        "closing ${timing.closingDelay.inWholeMilliseconds} ms"
+                GateOperation.ReadSettings -> "Read typed settings block"
+                is GateOperation.ApplySettings -> "Apply ${settings.size} typed settings"
+                is GateOperation.Diagnostic -> "Run ${diagnostic.traceName()} diagnostic"
+                GateOperation.Reset -> "Reset controller"
+            }
+
+    private fun GateResponse.responseDetail(): String =
+        when (this) {
+            GateResponse.Acknowledged -> "Controller acknowledged"
+            is GateResponse.Firmware -> "Firmware ${value.version} received"
+            is GateResponse.Status -> "Status snapshot received"
+            is GateResponse.Sensors -> "Sensor snapshot received"
+            is GateResponse.Clock -> "Controller RTC received"
+            is GateResponse.StandbyPolicy -> "Standby policy received"
+            is GateResponse.DoorTiming -> "Door timing received"
+            is GateResponse.Settings -> "${value.size} typed settings received"
+        }
+
+    private fun GateDiagnostic.traceName(): String =
+        when (this) {
+            is GateDiagnostic.Door -> "door actuator"
+            is GateDiagnostic.Lamp -> "direction lamp"
+            GateDiagnostic.Buzzer -> "warning buzzer"
+        }
+
+    private fun GateError.traceDetail(): String =
+        when (this) {
+            GateError.NotConnected -> "Gate is not connected"
+            is GateError.Timeout -> "Response timeout"
+            is GateError.Transport -> message
+            is GateError.Protocol -> message
+            is GateError.Device -> message ?: "Controller rejected request"
+            is GateError.InvalidRequest -> message
+            is GateError.UnsupportedCapability -> "Unsupported capability: ${capability.name.displayName()}"
+            is GateError.UnsupportedVendor -> "Unsupported vendor: ${vendor.name.displayName()}"
+        }
+
+    private fun String.displayName(): String =
+        lowercase()
+            .split('_')
+            .joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
 
     private companion object {
         const val EVENT_BUFFER_CAPACITY = 64

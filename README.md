@@ -11,11 +11,11 @@ diagnostics, and lifecycle through one vendor-neutral interface.
 [![Kotlin](https://img.shields.io/badge/Kotlin-Multiplatform-7f52ff?logo=kotlin&logoColor=white)](https://kotlinlang.org/docs/multiplatform.html)
 [![JVM](https://img.shields.io/badge/JVM-17%2B-e76f00?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/17/)
 [![API](https://img.shields.io/badge/public_API-com.qurkos.gate.sdk-2563eb)](#public-api)
-[![Tests](https://img.shields.io/badge/tests-43_passing-16a34a)](#build-and-verify)
+[![Tests](https://img.shields.io/badge/tests-51_passing-16a34a)](#build-and-verify)
 [![Coverage](https://img.shields.io/badge/line_coverage-93.52%25-16a34a)](#build-and-verify)
 
 [Quick start](#quick-start) · [Commands](#send-gate-commands) ·
-[Architecture](#how-it-works) · [Documentation](#documentation) ·
+[Control panel](#desktop-control-panel) · [Architecture](#how-it-works) · [Documentation](#documentation) ·
 [Adding a vendor](docs/ADDING_A_GATE.md)
 
 </div>
@@ -75,7 +75,7 @@ repositories {
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.qurkos.afc:afc-gate-sdk:0.1.0-SNAPSHOT")
+            implementation("com.qurkos.afc:afc-gate-sdk:1.0.0")
         }
     }
 }
@@ -182,11 +182,58 @@ coroutineScope {
 status response. Events provide observation and diagnostics; the `GateResult`
 returned by each command remains the authoritative operation outcome.
 
+Every serialized SDK operation also emits a correlated semantic traffic pair:
+`GateEvent.CommandSent` before transmission and `GateEvent.ResponseReceived`
+after completion. Match their `sequence` values to build a live operations
+console, and use the response `outcome` and `elapsed` fields for error and
+latency reporting. These events intentionally expose typed, vendor-neutral
+operation names rather than raw protocol bytes, so monitoring cannot bypass the
+safe `Gate` API.
+
 Release the port when its owning application component stops:
 
 ```kotlin
 gate.disconnect()
 ```
+
+## Desktop control panel
+
+The repository includes a production-shaped Compose Desktop control panel for
+commissioning, demonstrations, diagnostics, and integration testing. It uses
+the same public `Gate` interface as a consuming application.
+
+```bash
+./gradlew :control-panel:run
+```
+
+The panel is hardware-only and starts disconnected. Review the serial settings,
+then select **Connect** before sending commands to a physical Puloon controller.
+There is no simulator or fake connected state: gate motion is animated only
+after an SDK command succeeds or a confirmed status update is received.
+The Live Control screen includes a bounded, read-only **Command Traffic** feed
+showing correlated TX/RX operations, response latency, and failures from the
+physical SDK session. Background status polling and configuration operations
+appear in the same feed as operator commands.
+
+Tagged releases include `afc-gate-control-panel-VERSION.jar` for file-based
+dependency use. The UI JAR is deliberately not published to Maven; see
+[Control Panel](docs/CONTROL_PANEL.md#use-as-a-compiled-jar) for its required
+runtime dependencies.
+
+Five operational screens are included:
+
+| Screen | Purpose |
+|---|---|
+| Live Control | Entry, exit, rejection, protected emergency release, gate motion, and recent events |
+| Sensors | All 16 inputs in a dedicated status inventory with grouping and filtering |
+| Configuration | Serial, timing, reconnection, mode, and maintenance opt-in settings |
+| Diagnostics | Explicit actuator, lamp, buzzer, sensor, and power checks |
+| Event Log | Searchable and severity-filtered operational history |
+
+Emergency activation and reset require a deliberate three-second hold. The UI
+never reports a connection before the SDK opens the serial port. See the
+[control-panel operations guide](docs/CONTROL_PANEL.md) for architecture,
+safety boundaries, packaging, and extension points.
 
 ## How it works
 
@@ -255,7 +302,7 @@ JDK 17 or newer is required.
 
 ```bash
 ./gradlew clean
-./gradlew check dokkaGeneratePublicationHtml publishToMavenLocal
+./gradlew check :control-panel:check dokkaGeneratePublicationHtml publishToMavenLocal
 ```
 
 The verification gate includes:

@@ -29,3 +29,9 @@ style:
     active: true
     max: 4
     excludeGuardClauses: true
+
+naming:
+  FunctionNaming:
+    active: true
+    ignoreAnnotated:
+      - Composable

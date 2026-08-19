@@ -33,5 +33,9 @@ jobs:
           build-mode: manual
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
       - name: Compile analyzed sources
-        run: ./gradlew --no-daemon clean compileKotlinJvm compileTestKotlinJvm
+        # CodeQL must observe real compiler processes; cached Kotlin outputs contain no traceable compilation events.
+        run: >-
+          ./gradlew --no-daemon --no-build-cache --rerun-tasks clean
+          compileKotlinJvm compileTestKotlinJvm
+          :control-panel:compileKotlin :control-panel:compileTestKotlin
       - uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4

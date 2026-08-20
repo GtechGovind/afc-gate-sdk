@@ -32,6 +32,19 @@ Alert on repeated `RECONNECTING`/`FAILED`, sustained status staleness, rising ti
 or protocol warnings after a firmware rollout. A single reconnect can be normal for a USB reset; repeated transitions
 usually indicate power, cabling, driver, port ownership, or controller problems.
 
+## Control-panel log files
+
+The desktop control panel persists safe operational events, semantic command/response traffic, application lifecycle
+messages, and uncaught exceptions. It rotates at 5 MiB and retains seven files. Operators can open the active directory
+from **Event Log → Open log folder**.
+
+- Windows: `%LOCALAPPDATA%\\Qurkos\\AFC Gate Control Panel\\logs`
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/afc-gate-control-panel/logs`
+- macOS: `~/Library/Logs/AFC Gate Control Panel`
+
+Collect these files with controller firmware, hardware profile, and incident time when escalating a fault. Do not add raw
+protocol frames, credentials, passenger identifiers, or ticket contents to application log messages.
+
 ## Troubleshooting
 
 ### Port cannot be opened

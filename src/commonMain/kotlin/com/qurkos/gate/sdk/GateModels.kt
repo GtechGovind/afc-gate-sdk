@@ -153,6 +153,7 @@ public enum class GateEmergencyState {
  *
  * @property active One-based identifiers currently active.
  * @property hasFault Whether the controller reports a sensor subsystem fault.
+ * @property faulted One-based identifiers whose individual fault bits are set.
  */
 public data class GateSensorStatus(
     public val active: Set<GateSensorId>,
@@ -164,6 +165,9 @@ public data class GateSensorStatus(
  * Optional power subsystem status.
  *
  * @property upsPresent Whether the configured/observed controller includes a UPS.
+ * @property online Whether external/line power is available when reported.
+ * @property onBattery Whether the UPS is supplying battery power when reported.
+ * @property chargePercent Remaining battery charge from 0 through 100 when reported.
  * @property summary Vendor-normalized diagnostic summary when the protocol exposes one.
  */
 public data class GatePowerStatus(
@@ -231,6 +235,16 @@ public enum class GateOccupancyZone {
  * @property emergency Current emergency input state.
  * @property sensors Sensor summary included in the status response.
  * @property power Optional UPS/power information.
+ * @property passageResult Most recent passage completion or timeout result.
+ * @property entryError Fraud or intrusion condition detected in the entry direction.
+ * @property exitError Fraud or intrusion condition detected in the exit direction.
+ * @property doorFaults Door actuator fault bits currently reported by the GCU.
+ * @property occupiedZones Passenger-detection zones currently occupied.
+ * @property switches One-based controller switch states when exposed by the status frame.
+ * @property inputs One-based controller input states when exposed by the status frame.
+ * @property tokenPathACount Optional token-control-unit path A count.
+ * @property tokenPathBCount Optional token-control-unit path B count.
+ * @property returnCupOccupied Optional token return-cup occupancy state.
  * @property observedAt SDK clock instant at which the valid response was decoded.
  */
 public data class GateStatus(
@@ -307,13 +321,20 @@ public enum class GateDoorTestAction {
     LOCK,
 }
 
+/** Typed maintenance diagnostics documented by the selected gate controller protocol. */
 public sealed interface GateDiagnostic {
     /** Runs one documented door actuator test. */
     public data class Door(
+        /** Requested actuator action. */
         public val action: GateDoorTestAction,
     ) : GateDiagnostic
 
-    /** Controls the gate-end display using the documented green, yellow, and red outputs. */
+    /**
+     * Controls the gate-end display using the documented green, yellow, and red outputs.
+     *
+     * @property color Documented end-display output color.
+     * @property enabled Whether the selected output is illuminated.
+     */
     public data class EndDisplay(
         public val color: GateLampColor,
         public val enabled: Boolean,
@@ -325,7 +346,12 @@ public sealed interface GateDiagnostic {
         }
     }
 
-    /** Controls the concession/direction indicator using green, blue, or red. */
+    /**
+     * Controls the concession/direction indicator using green, blue, or red.
+     *
+     * @property color Documented indicator output color.
+     * @property enabled Whether the selected output is illuminated.
+     */
     public data class Indicator(
         public val color: GateLampColor,
         public val enabled: Boolean,
@@ -337,7 +363,12 @@ public sealed interface GateDiagnostic {
         }
     }
 
-    /** Controls one of the three documented buzzer outputs. */
+    /**
+     * Controls one of the three documented buzzer outputs.
+     *
+     * @property index One-based buzzer output number from 1 through 3.
+     * @property enabled Whether the selected buzzer is energized.
+     */
     public data class Buzzer(
         public val index: Int,
         public val enabled: Boolean,
@@ -349,6 +380,7 @@ public sealed interface GateDiagnostic {
 
     /** Controls the optional TCU return-cup LED. */
     public data class ReturnCupLamp(
+        /** Whether the lamp is illuminated. */
         public val enabled: Boolean,
     ) : GateDiagnostic
 }
@@ -372,7 +404,11 @@ public sealed interface GateSetting {
         public val value: Duration,
     ) : GateSetting
 
-    /** Child-detection controller level: 0 disabled, 1 normal, 2 optional enhanced sensors. */
+    /**
+     * Child-detection controller level: 0 disabled, 1 normal, 2 optional enhanced sensors.
+     *
+     * @property level Documented controller level from 0 through 2.
+     */
     public data class ChildDetection(
         public val level: Int,
     ) : GateSetting
@@ -398,12 +434,20 @@ public sealed interface GateSetting {
         public val enabled: Boolean,
     ) : GateSetting
 
-    /** Raw documented buzzer-timeout value, from 0x00 through 0xFE. */
+    /**
+     * Raw documented buzzer-timeout value, from 0x00 through 0xFE.
+     *
+     * @property value Unsigned controller timeout unit from 0 through 254.
+     */
     public data class BuzzerTimeoutUnits(
         public val value: Int,
     ) : GateSetting
 
-    /** Safety-region timeout, or `null` for the documented 0xFF disabled value. */
+    /**
+     * Safety-region timeout, or `null` for the documented 0xFF disabled value.
+     *
+     * @property value Finite timeout duration, or `null` to disable the timeout.
+     */
     public data class SafetyRegionTimeout(
         public val value: Duration?,
     ) : GateSetting

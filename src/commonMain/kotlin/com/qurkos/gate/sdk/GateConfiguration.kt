@@ -181,6 +181,7 @@ public enum class GateModule {
  * @property site Regional controller profile.
  * @property modules Installed optional modules. Supplying a module that is not physically installed can produce invalid
  * status interpretation and must be avoided.
+ * @property normalOpen Whether the profile uses the normal-open barrier operating variant.
  */
 public data class GateHardwareProfile(
     public val mechanism: GateMechanism = GateMechanism.SECTOR,
@@ -193,6 +194,11 @@ public data class GateHardwareProfile(
  * Operations and finite choices supported by one validated hardware profile.
  *
  * This snapshot lets applications hide unsupported controls before opening a serial port.
+ *
+ * @property capabilities Operations accepted by the selected profile.
+ * @property passModes Passage modes valid for the mechanism and normal-open variant.
+ * @property safetyRegions Addressable one-based safety regions.
+ * @property sensors Installed one-based sensor identifiers exposed by the profile.
  */
 public data class GateSupport(
     public val capabilities: Set<GateCapability>,

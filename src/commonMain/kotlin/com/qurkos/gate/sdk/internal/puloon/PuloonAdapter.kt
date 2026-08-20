@@ -3,16 +3,22 @@ package com.qurkos.gate.sdk.internal.puloon
 import com.qurkos.gate.sdk.GateCapability
 import com.qurkos.gate.sdk.GateDescriptor
 import com.qurkos.gate.sdk.GateDiagnostic
+import com.qurkos.gate.sdk.GateDoorTestAction
 import com.qurkos.gate.sdk.GateDoorTiming
 import com.qurkos.gate.sdk.GateError
 import com.qurkos.gate.sdk.GateFirmwareInfo
 import com.qurkos.gate.sdk.GateHardwareProfile
+import com.qurkos.gate.sdk.GateLampColor
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
 import com.qurkos.gate.sdk.GateResult
+import com.qurkos.gate.sdk.GateSafetyRegion
+import com.qurkos.gate.sdk.GateSensorId
+import com.qurkos.gate.sdk.GateSetting
 import com.qurkos.gate.sdk.GateSite
 import com.qurkos.gate.sdk.GateStandbyPolicy
+import com.qurkos.gate.sdk.GateSupport
 import com.qurkos.gate.sdk.GateVendor
 import com.qurkos.gate.sdk.SerialParameters
 import com.qurkos.gate.sdk.internal.GateOperation
@@ -31,14 +37,21 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 internal class PuloonAdapter(
     private val hardware: GateHardwareProfile,
-    maintenanceOperationsEnabled: Boolean,
+    private val maintenanceOperationsEnabled: Boolean,
 ) : GateProtocolAdapter {
     private var sequence = 0
 
     override val descriptor = GateDescriptor(GateVendor.PULOON, hardware.mechanism, hardware.site)
     override val defaultSerialParameters = SerialParameters(baudRate = 57_600)
     override val minimumPollInterval: Duration = 101.milliseconds
-    override val capabilities: Set<GateCapability> = buildCapabilities(maintenanceOperationsEnabled)
+    override val capabilities: Set<GateCapability> = buildCapabilities()
+    override val support: GateSupport =
+        GateSupport(
+            capabilities = capabilities,
+            passModes = GatePassMode.entries.filterTo(mutableSetOf()) { isPassModeSupported(it, hardware.normalOpen) },
+            safetyRegions = supportedSafetyRegions(),
+            sensors = supportedSensors(),
+        )
 
     /** Creates independent streaming state for this adapter's serial session. */
     override fun newDecoder(): StreamingFrameDecoder = PuloonFrameDecoder()
@@ -71,7 +84,13 @@ internal class PuloonAdapter(
                 read('S') { data ->
                     GateResponse.Status(PuloonPayloadCodec.decodeStatus(data, hardware))
                 }
-            is GateOperation.SetPassMode -> write('D', byteArrayOf(ascii(operation.mode.wireValue())))
+            is GateOperation.SetPassMode -> {
+                require(isPassModeSupported(operation.mode, operation.normalOpen)) {
+                    "Pass mode ${operation.mode} is unsupported for ${hardware.mechanism}, ${hardware.site}, " +
+                        "normalOpen=${operation.normalOpen}"
+                }
+                write('D', byteArrayOf(ascii(operation.mode.wireValue())))
+            }
             is GateOperation.SetSafetyRegion -> {
                 validateSafetyRegion(operation.region.number)
                 write('G', byteArrayOf((ascii('0') + operation.region.number).toByte()))
@@ -89,6 +108,7 @@ internal class PuloonAdapter(
                 write(
                     'X',
                     byteArrayOf(ascii('0')) + PuloonPayloadCodec.encodeClock(operation.clock),
+                    responseCommands = setOf('X', 'P'),
                 )
             is GateOperation.SetUpsShutdownDelay -> {
                 require(operation.seconds in 0..MAX_UPS_SECONDS && operation.seconds % UPS_STEP_SECONDS == 0) {
@@ -111,11 +131,10 @@ internal class PuloonAdapter(
                     val settings = if (data.firstOrNull() == ascii('1')) data.drop(1).toByteArray() else data
                     GateResponse.Settings(PuloonSettingsCodec.decode(settings))
                 }
-            is GateOperation.ApplySettings ->
-                write(
-                    'P',
-                    byteArrayOf(ascii('0')) + PuloonSettingsCodec.encode(operation.settings),
-                )
+            is GateOperation.ApplySettings -> {
+                validateSettings(operation.settings)
+                write('P', byteArrayOf(ascii('0')) + PuloonSettingsCodec.encode(operation.settings))
+            }
             is GateOperation.Diagnostic -> write('T', encodeDiagnostic(operation.diagnostic))
             GateOperation.Reset -> write('R')
         }
@@ -132,7 +151,8 @@ internal class PuloonAdapter(
     private fun write(
         command: Char,
         data: ByteArray = ByteArray(0),
-    ): PuloonTransaction = transaction(command, data, setOf(command), idempotent = false) { GateResponse.Acknowledged }
+        responseCommands: Set<Char> = setOf(command),
+    ): PuloonTransaction = transaction(command, data, responseCommands, idempotent = false) { GateResponse.Acknowledged }
 
     /** Allocates the next wrapping sequence and captures immutable request/correlation fields. */
     private fun transaction(
@@ -185,16 +205,19 @@ internal class PuloonAdapter(
     /** Encodes an explicitly enabled maintenance diagnostic subtype. */
     private fun encodeDiagnostic(diagnostic: GateDiagnostic): ByteArray =
         when (diagnostic) {
-            is GateDiagnostic.Door -> byteArrayOf(ascii('0'), ascii(if (diagnostic.open) '1' else '0'))
-            is GateDiagnostic.Lamp -> {
-                require(diagnostic.index in 0..9) { "Lamp index must be between 0 and 9" }
-                byteArrayOf(
-                    ascii('1'),
-                    (ascii('0') + diagnostic.index).toByte(),
-                    ascii(if (diagnostic.enabled) '1' else '0'),
-                )
+            is GateDiagnostic.Door -> byteArrayOf(ascii('0'), ascii(diagnostic.action.wireValue()))
+            is GateDiagnostic.EndDisplay -> byteArrayOf(ascii('1'), ascii(diagnostic.color.outputWireValue(diagnostic.enabled)))
+            is GateDiagnostic.Indicator -> byteArrayOf(ascii('2'), ascii(diagnostic.color.outputWireValue(diagnostic.enabled)))
+            is GateDiagnostic.Buzzer -> {
+                val action = (diagnostic.index - 1) * 2 + if (diagnostic.enabled) 1 else 2
+                byteArrayOf(ascii('3'), (ascii('0') + action).toByte())
             }
-            GateDiagnostic.Buzzer -> byteArrayOf(ascii('2'), ascii('1'))
+            is GateDiagnostic.ReturnCupLamp -> {
+                require(GateModule.TOKEN_CONTROL_UNIT in hardware.modules) {
+                    "Return-cup lamp test requires the token control unit"
+                }
+                byteArrayOf(ascii('5'), ascii(if (diagnostic.enabled) '7' else '8'))
+            }
         }
 
     /** Enforces mechanism-specific GCU safety-region bounds. */
@@ -203,20 +226,101 @@ internal class PuloonAdapter(
             when (hardware.mechanism) {
                 GateMechanism.SECTOR -> region in 1..6
                 GateMechanism.SWING -> region in 1..3
-                GateMechanism.FLAP -> region in 1..3
+                GateMechanism.FLAP -> false
             }
         require(valid) { "Safety region $region is invalid for ${hardware.mechanism}" }
     }
 
     /** Derives the immutable capability set from physical and operational configuration. */
-    private fun buildCapabilities(maintenanceEnabled: Boolean): Set<GateCapability> =
+    private fun buildCapabilities(): Set<GateCapability> =
         buildSet {
             addAll(BASE_CAPABILITIES)
             if (hardware.isIndia()) addAll(INDIA_CAPABILITIES)
             if (hardware.site == GateSite.KOLKATA_INDIA) add(GateCapability.STANDBY)
-            if (GateModule.UPS in hardware.modules) add(GateCapability.UPS_SHUTDOWN)
-            if (maintenanceEnabled) addAll(MAINTENANCE_CAPABILITIES)
+            if (hardware.isIndia() && GateModule.UPS in hardware.modules) add(GateCapability.UPS_SHUTDOWN)
+            if (hardware.isIndia() && hardware.mechanism == GateMechanism.SECTOR) add(GateCapability.INVALID_TICKET)
+            if (maintenanceOperationsEnabled) addAll(MAINTENANCE_CAPABILITIES)
         }
+
+    private fun supportedSafetyRegions(): Set<GateSafetyRegion> =
+        when (hardware.mechanism) {
+            GateMechanism.SECTOR -> (1..6)
+            GateMechanism.SWING -> (1..3)
+            GateMechanism.FLAP -> IntRange.EMPTY
+        }.mapTo(mutableSetOf(), ::GateSafetyRegion)
+
+    private fun supportedSensors(): Set<GateSensorId> =
+        buildSet {
+            when (hardware.mechanism) {
+                GateMechanism.SECTOR -> addAll(((1..9) + (11..19)).map(::GateSensorId))
+                GateMechanism.SWING -> addAll(((1..9) + (11..19) + listOf(23, 24)).map(::GateSensorId))
+                GateMechanism.FLAP -> Unit
+            }
+            if (hardware.site == GateSite.CHINA && GateModule.CHILD_SENSORS in hardware.modules) {
+                addAll(listOf(10, 20, 21, 22).map(::GateSensorId))
+            }
+            if (hardware.isIndia() && GateModule.TOKEN_CONTROL_UNIT in hardware.modules) {
+                addAll(listOf(21, 22, 25, 26).map(::GateSensorId))
+            }
+        }
+
+    private fun validateSettings(settings: Set<GateSetting>) {
+        val normalOpen = settings.filterIsInstance<GateSetting.NormalOpenMode>().singleOrNull()
+        if (hardware.mechanism == GateMechanism.SWING) {
+            require(normalOpen?.enabled != true) { "Normal-open gate mode is unsupported by SwingDoor" }
+        }
+        val child = settings.filterIsInstance<GateSetting.ChildDetection>().singleOrNull()
+        if (hardware.isIndia()) require(child?.level == 0) { "Child detection must be disabled for India profiles" }
+        if (child != null && child.level > 0) {
+            require(hardware.site == GateSite.CHINA && GateModule.CHILD_SENSORS in hardware.modules) {
+                "Child detection requires the China profile and installed child sensors"
+            }
+        }
+    }
+
+    private fun isPassModeSupported(
+        mode: GatePassMode,
+        normalOpen: Boolean,
+    ): Boolean =
+        when (mode) {
+            GatePassMode.CONTROLLED_BOTH -> hardware.mechanism != GateMechanism.SWING || !normalOpen
+            GatePassMode.FREE_ENTRY_LOCKED_EXIT_NORMAL_CLOSED,
+            GatePassMode.FREE_EXIT_LOCKED_ENTRY_NORMAL_CLOSED,
+            -> !normalOpen
+            GatePassMode.CONTROLLED_ENTRY_LOCKED_EXIT,
+            GatePassMode.CONTROLLED_EXIT_LOCKED_ENTRY,
+            -> true
+            GatePassMode.FREE_ENTRY_CONTROLLED_EXIT_NORMAL_CLOSED,
+            GatePassMode.FREE_EXIT_CONTROLLED_ENTRY_NORMAL_CLOSED,
+            -> hardware.mechanism != GateMechanism.SWING || !normalOpen
+            GatePassMode.FREE_ENTRY_CONTROLLED_EXIT_NORMAL_OPEN,
+            GatePassMode.FREE_EXIT_CONTROLLED_ENTRY_NORMAL_OPEN,
+            -> normalOpen && hardware.mechanism != GateMechanism.SWING
+            GatePassMode.FREE_ENTRY_LOCKED_EXIT_NORMAL_OPEN,
+            GatePassMode.FREE_EXIT_LOCKED_ENTRY_NORMAL_OPEN,
+            -> normalOpen
+            GatePassMode.FREE_BOTH ->
+                (hardware.mechanism == GateMechanism.SECTOR && normalOpen) ||
+                    (hardware.mechanism == GateMechanism.SWING && !normalOpen)
+            GatePassMode.LOCKED_BOTH -> true
+            GatePassMode.MAINTENANCE -> maintenanceOperationsEnabled
+            GatePassMode.TEST_PASSAGE,
+            GatePassMode.OUT_OF_SERVICE,
+            -> hardware.isIndia()
+        }
+
+    private fun GateDoorTestAction.wireValue(): Char = ('1'.code + ordinal).toChar()
+
+    private fun GateLampColor.outputWireValue(enabled: Boolean): Char {
+        val onValue =
+            when (this) {
+                GateLampColor.GREEN -> 1
+                GateLampColor.BLUE, GateLampColor.YELLOW -> 3
+                GateLampColor.RED -> 5
+                GateLampColor.OFF -> throw IllegalArgumentException("OFF is not a diagnostic output color")
+            }
+        return ('0'.code + onValue + if (enabled) 0 else 1).toChar()
+    }
 
     /** Returns whether India-specific GCU commands and fields are available. */
     private fun GateHardwareProfile.isIndia(): Boolean = site == GateSite.INDIA || site == GateSite.KOLKATA_INDIA
@@ -249,12 +353,10 @@ internal class PuloonAdapter(
             setOf(
                 GateCapability.PASSAGE,
                 GateCapability.EMERGENCY,
-                GateCapability.INITIALIZE,
                 GateCapability.FIRMWARE,
                 GateCapability.STATUS,
                 GateCapability.PASS_MODE,
                 GateCapability.SAFETY_REGION,
-                GateCapability.PASSAGE_COUNTERS,
                 GateCapability.SENSORS,
                 GateCapability.DOOR_TIMING,
                 GateCapability.SETTINGS,
@@ -263,9 +365,14 @@ internal class PuloonAdapter(
             setOf(
                 GateCapability.MULTI_PERSON_PASSAGE,
                 GateCapability.PASSAGE_LAMP,
-                GateCapability.INVALID_TICKET,
                 GateCapability.CLOCK,
             )
-        val MAINTENANCE_CAPABILITIES = setOf(GateCapability.DIAGNOSTICS, GateCapability.RESET)
+        val MAINTENANCE_CAPABILITIES =
+            setOf(
+                GateCapability.DIAGNOSTICS,
+                GateCapability.RESET,
+                GateCapability.INITIALIZE,
+                GateCapability.PASSAGE_COUNTERS,
+            )
     }
 }

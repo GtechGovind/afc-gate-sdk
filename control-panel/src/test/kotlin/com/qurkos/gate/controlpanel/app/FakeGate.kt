@@ -36,7 +36,7 @@ import kotlin.time.Instant
 internal class FakeGate(
     private val connectResult: GateResult<Unit> = GateResult.Success(Unit),
 ) : Gate {
-    override val descriptor = GateDescriptor(GateVendor.PULOON, GateMechanism.FLAP, GateSite.GENERIC)
+    override val descriptor = GateDescriptor(GateVendor.PULOON, GateMechanism.SECTOR, GateSite.GENERIC)
     override val capabilities: Set<GateCapability> = GateCapability.entries.toSet()
     private val mutableConnection = MutableStateFlow(GateConnectionState.DISCONNECTED)
     private val mutableStatus = MutableStateFlow<GateStatus?>(sampleStatus())
@@ -69,6 +69,7 @@ internal class FakeGate(
     override suspend fun connect(): GateResult<Unit> {
         mutableConnection.value =
             if (connectResult is GateResult.Success) GateConnectionState.CONNECTED else GateConnectionState.CONNECTING
+        if (connectResult is GateResult.Success) statusReads += 1
         return connectResult
     }
 
@@ -87,7 +88,7 @@ internal class FakeGate(
         emergencyRequests += enabled
         mutableStatus.value =
             mutableStatus.value?.copy(
-                emergency = if (enabled) GateEmergencyState.REMOTE else GateEmergencyState.INACTIVE,
+                emergency = if (enabled) GateEmergencyState.ECU else GateEmergencyState.INACTIVE,
             )
         return GateResult.Success(Unit)
     }
@@ -183,7 +184,12 @@ internal class FakeGate(
                 entryCount = 7,
                 exitCount = 5,
                 emergency = GateEmergencyState.INACTIVE,
-                sensors = GateSensorStatus(activeSensors, sensorFault),
+                sensors =
+                    GateSensorStatus(
+                        activeSensors,
+                        sensorFault,
+                        faulted = if (sensorFault) setOf(GateSensorId(4)) else emptySet(),
+                    ),
                 power = GatePowerStatus(upsPresent = true, summary = "Good"),
                 observedAt = Instant.fromEpochMilliseconds(1_000),
             )

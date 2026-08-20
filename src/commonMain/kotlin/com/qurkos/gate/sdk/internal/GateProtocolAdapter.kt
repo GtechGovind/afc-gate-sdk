@@ -15,6 +15,7 @@ import com.qurkos.gate.sdk.GateSensorStatus
 import com.qurkos.gate.sdk.GateSetting
 import com.qurkos.gate.sdk.GateStandbyPolicy
 import com.qurkos.gate.sdk.GateStatus
+import com.qurkos.gate.sdk.GateSupport
 import com.qurkos.gate.sdk.SerialParameters
 import kotlin.time.Duration
 
@@ -45,6 +46,8 @@ internal sealed interface GateOperation {
     data class SetPassMode(
         /** Requested common passage mode. */
         val mode: GatePassMode,
+        /** Last confirmed normal-open setting used for profile validation. */
+        val normalOpen: Boolean = false,
     ) : GateOperation
 
     /** Safety-region mutation. @property region Requested one-based region. */
@@ -223,6 +226,9 @@ internal interface GateProtocolAdapter {
 
     /** Capabilities supported by this adapter and hardware profile. */
     val capabilities: Set<GateCapability>
+
+    /** Complete profile support used by pre-connection UI filtering. */
+    val support: GateSupport
 
     /** Documented line settings used when callers omit explicit parameters. */
     val defaultSerialParameters: SerialParameters

@@ -34,12 +34,17 @@ internal object PuloonInputRules {
     val upsShutdownDelay = NumericInputRule(0L..2_550L, step = 10, unit = "s")
     val standbyTimeout = NumericInputRule(0L..255L, unit = "s")
     val byteSetting = NumericInputRule(0L..255L)
+    val noEntryTimeout = NumericInputRule(0L..999L, unit = "s")
+    val buzzerTimeout = NumericInputRule(0L..254L, unit = "raw units")
+    val safetyRegionTimeout = NumericInputRule(0L..255L, unit = "s; 255 disables")
 }
 
 /** Returns whether every editable value can be represented by the current Puloon adapter. */
 internal fun GateConfigurationUi.hasValidInputs(): Boolean =
     listOf(
         serialPort.isNotBlank(),
+        mechanism == "SECTOR" || mechanism == "SWING",
+        site in setOf("GENERIC", "INDIA", "KOLKATA_INDIA", "CHINA"),
         passageMode.isNotBlank(),
         standbyPassMode.isNotBlank(),
         PuloonInputRules.baudRate.accepts(baudRate),
@@ -47,12 +52,17 @@ internal fun GateConfigurationUi.hasValidInputs(): Boolean =
         PuloonInputRules.pollInterval.accepts(pollIntervalMs),
         PuloonInputRules.doorTiming.accepts(openDurationMs),
         PuloonInputRules.doorTiming.accepts(closeDelayMs),
-        safetyRegion.toIntOrNull() in 1..3,
+        safetyRegion.toIntOrNull() in 1..6,
         PuloonInputRules.upsShutdownDelay.accepts(upsShutdownDelaySeconds),
         PuloonInputRules.standbyTimeout.accepts(standbyTimeoutSeconds),
-        PuloonInputRules.byteSetting.accepts(sensorSensitivity),
-        PuloonInputRules.byteSetting.accepts(passageTimeoutSeconds),
-        PuloonInputRules.byteSetting.accepts(childHeight),
-        tailingSensitivity.toIntOrNull() in 0..2,
-        hurryUpLevel.toIntOrNull() in 0..2,
+        PuloonInputRules.noEntryTimeout.accepts(noEntryTimeoutSeconds),
+        PuloonInputRules.buzzerTimeout.accepts(buzzerTimeoutUnits),
+        PuloonInputRules.safetyRegionTimeout.accepts(safetyRegionTimeoutSeconds),
+        tailingSensitivity.toIntOrNull() in 0..1,
+        hurryUpLevel.toIntOrNull() in 0..3,
+        childDetectionLevel.toIntOrNull() in 0..2,
+        !normalOpenMode || mechanism != "SWING",
+        childDetectionLevel == "0" || (site == "CHINA" && childSensorsInstalled),
+        !upsInstalled || site == "INDIA" || site == "KOLKATA_INDIA",
+        !tokenControlUnitInstalled || site == "INDIA" || site == "KOLKATA_INDIA",
     ).all { it }

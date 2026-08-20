@@ -183,9 +183,22 @@ public enum class GateModule {
  * status interpretation and must be avoided.
  */
 public data class GateHardwareProfile(
-    public val mechanism: GateMechanism = GateMechanism.FLAP,
+    public val mechanism: GateMechanism = GateMechanism.SECTOR,
     public val site: GateSite = GateSite.GENERIC,
     public val modules: Set<GateModule> = emptySet(),
+    public val normalOpen: Boolean = false,
+)
+
+/**
+ * Operations and finite choices supported by one validated hardware profile.
+ *
+ * This snapshot lets applications hide unsupported controls before opening a serial port.
+ */
+public data class GateSupport(
+    public val capabilities: Set<GateCapability>,
+    public val passModes: Set<GatePassMode>,
+    public val safetyRegions: Set<GateSafetyRegion>,
+    public val sensors: Set<GateSensorId>,
 )
 
 /**

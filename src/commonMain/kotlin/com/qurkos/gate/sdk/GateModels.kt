@@ -142,8 +142,9 @@ public value class GateSensorId(
 /** Emergency input state reported by a controller. */
 public enum class GateEmergencyState {
     INACTIVE,
-    LOCAL,
-    REMOTE,
+    ECU,
+    TWENTY_FOUR_VOLT,
+    BOTH,
     UNKNOWN,
 }
 
@@ -156,6 +157,7 @@ public enum class GateEmergencyState {
 public data class GateSensorStatus(
     public val active: Set<GateSensorId>,
     public val hasFault: Boolean,
+    public val faulted: Set<GateSensorId> = emptySet(),
 )
 
 /**
@@ -166,8 +168,59 @@ public data class GateSensorStatus(
  */
 public data class GatePowerStatus(
     public val upsPresent: Boolean,
+    public val online: Boolean? = null,
+    public val onBattery: Boolean? = null,
+    public val chargePercent: Int? = null,
     public val summary: String? = null,
-)
+) {
+    init {
+        require(chargePercent == null || chargePercent in 0..100) { "UPS charge must be between 0 and 100 percent" }
+    }
+}
+
+/** Reason the controller last consumed or cleared an authorized passage count. */
+public enum class GatePassageResult {
+    IDLE,
+    ENTRY_COMPLETED,
+    EXIT_COMPLETED,
+    ENTRY_TIMEOUT,
+    EXIT_TIMEOUT,
+    ENTRY_PRE_DOOR_TIMEOUT,
+    EXIT_PRE_DOOR_TIMEOUT,
+    ENTRY_TAILGATE_USED,
+    EXIT_TAILGATE_USED,
+    ENTRY_WRONG_WAY_USED,
+    EXIT_WRONG_WAY_USED,
+    UNKNOWN,
+}
+
+/** Direction-specific fraud or intrusion condition reported by status. */
+public enum class GatePassageError {
+    NORMAL,
+    PIGGY_TAILING,
+    INTRUSION,
+    WRONG_WAY_FRAUD,
+    UNKNOWN,
+}
+
+/** Door actuator faults reported in the status bit mask. */
+public enum class GateDoorFault {
+    DOOR_1_OPEN,
+    DOOR_1_CLOSE,
+    DOOR_2_OPEN,
+    DOOR_2_CLOSE,
+}
+
+/** Occupancy zones reported by the GCU inner-state bit mask. */
+public enum class GateOccupancyZone {
+    ENTRY_BLOCK_1,
+    ENTRY_BLOCK_2,
+    ENTRY_BLOCK_3,
+    SAFETY_AREA,
+    EXIT_BLOCK_3,
+    EXIT_BLOCK_2,
+    EXIT_BLOCK_1,
+}
 
 /**
  * Latest normalized status read from a controller.
@@ -187,6 +240,16 @@ public data class GateStatus(
     public val emergency: GateEmergencyState,
     public val sensors: GateSensorStatus,
     public val power: GatePowerStatus? = null,
+    public val passageResult: GatePassageResult = GatePassageResult.UNKNOWN,
+    public val entryError: GatePassageError = GatePassageError.UNKNOWN,
+    public val exitError: GatePassageError = GatePassageError.UNKNOWN,
+    public val doorFaults: Set<GateDoorFault> = emptySet(),
+    public val occupiedZones: Set<GateOccupancyZone> = emptySet(),
+    public val switches: Map<Int, Boolean> = emptyMap(),
+    public val inputs: Map<Int, Boolean> = emptyMap(),
+    public val tokenPathACount: Int? = null,
+    public val tokenPathBCount: Int? = null,
+    public val returnCupOccupied: Boolean? = null,
     public val observedAt: Instant,
 )
 
@@ -237,29 +300,57 @@ public data class GateDoorTiming(
  *
  * Diagnostics can actuate gate hardware and require [GateDeviceConfig.maintenanceOperationsEnabled].
  */
+public enum class GateDoorTestAction {
+    OPEN,
+    CLOSE,
+    FREE,
+    LOCK,
+}
+
 public sealed interface GateDiagnostic {
-    /**
-     * Opens or closes the door actuator for a service test.
-     *
-     * @property open `true` to drive the open test state; `false` to drive the closed state.
-     */
+    /** Runs one documented door actuator test. */
     public data class Door(
-        public val open: Boolean,
+        public val action: GateDoorTestAction,
     ) : GateDiagnostic
 
-    /**
-     * Enables or disables one controller lamp output for a service test.
-     *
-     * @property index Vendor-normalized lamp output index.
-     * @property enabled Requested output state.
-     */
-    public data class Lamp(
+    /** Controls the gate-end display using the documented green, yellow, and red outputs. */
+    public data class EndDisplay(
+        public val color: GateLampColor,
+        public val enabled: Boolean,
+    ) : GateDiagnostic {
+        init {
+            require(color == GateLampColor.GREEN || color == GateLampColor.YELLOW || color == GateLampColor.RED) {
+                "End-display test supports green, yellow, or red"
+            }
+        }
+    }
+
+    /** Controls the concession/direction indicator using green, blue, or red. */
+    public data class Indicator(
+        public val color: GateLampColor,
+        public val enabled: Boolean,
+    ) : GateDiagnostic {
+        init {
+            require(color == GateLampColor.GREEN || color == GateLampColor.BLUE || color == GateLampColor.RED) {
+                "Indicator test supports green, blue, or red"
+            }
+        }
+    }
+
+    /** Controls one of the three documented buzzer outputs. */
+    public data class Buzzer(
         public val index: Int,
         public val enabled: Boolean,
-    ) : GateDiagnostic
+    ) : GateDiagnostic {
+        init {
+            require(index in 1..3) { "Buzzer index must be between 1 and 3" }
+        }
+    }
 
-    /** Activates the controller buzzer service test. */
-    public data object Buzzer : GateDiagnostic
+    /** Controls the optional TCU return-cup LED. */
+    public data class ReturnCupLamp(
+        public val enabled: Boolean,
+    ) : GateDiagnostic
 }
 
 /**
@@ -275,31 +366,15 @@ public sealed interface GateSetting {
         public val enabled: Boolean,
     ) : GateSetting
 
-    /** Sensor sensitivity. @property value Adapter-validated controller value. */
-    public data class SensorSensitivity(
-        /** Adapter-validated controller value. */
-        public val value: Int,
-    ) : GateSetting
-
-    /** Passage timeout. @property value Finite adapter-validated duration. */
-    public data class PassageTimeout(
+    /** Time allowed for a passenger to enter after authorization. */
+    public data class NoEntryTimeout(
         /** Finite adapter-validated duration. */
         public val value: Duration,
     ) : GateSetting
 
-    /** Child detection switch. @property enabled Whether child detection is enabled. */
+    /** Child-detection controller level: 0 disabled, 1 normal, 2 optional enhanced sensors. */
     public data class ChildDetection(
-        /** Whether child detection is enabled. */
-        public val enabled: Boolean,
-    ) : GateSetting
-
-    /**
-     * Child-height threshold.
-     *
-     * @property value Adapter-validated height, or `null` for the controller's unset marker.
-     */
-    public data class ChildHeight(
-        public val value: Int?,
+        public val level: Int,
     ) : GateSetting
 
     /** Tailing sensitivity. @property level Adapter-validated controller level. */
@@ -321,6 +396,16 @@ public sealed interface GateSetting {
      */
     public data class TagTimeoutFromLastTag(
         public val enabled: Boolean,
+    ) : GateSetting
+
+    /** Raw documented buzzer-timeout value, from 0x00 through 0xFE. */
+    public data class BuzzerTimeoutUnits(
+        public val value: Int,
+    ) : GateSetting
+
+    /** Safety-region timeout, or `null` for the documented 0xFF disabled value. */
+    public data class SafetyRegionTimeout(
+        public val value: Duration?,
     ) : GateSetting
 }
 

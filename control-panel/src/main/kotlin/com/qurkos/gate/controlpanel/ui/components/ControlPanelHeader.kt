@@ -108,5 +108,5 @@ private val ConnectionHealth.color: Color
             ConnectionHealth.CONNECTED -> MaterialTheme.colorScheme.secondary
             ConnectionHealth.CONNECTING -> MaterialTheme.colorScheme.tertiary
             ConnectionHealth.DEGRADED -> MaterialTheme.colorScheme.error
-            ConnectionHealth.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
+            ConnectionHealth.DISCONNECTED -> MaterialTheme.colorScheme.error
         }

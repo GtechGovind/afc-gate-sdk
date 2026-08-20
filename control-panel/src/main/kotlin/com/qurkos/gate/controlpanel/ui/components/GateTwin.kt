@@ -31,8 +31,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.qurkos.afc.control_panel.generated.resources.Res
 import com.qurkos.afc.control_panel.generated.resources.gate_closed
-import com.qurkos.afc.control_panel.generated.resources.gate_emergency
+import com.qurkos.afc.control_panel.generated.resources.gate_disconnected
+import com.qurkos.afc.control_panel.generated.resources.gate_emergency_release
 import com.qurkos.afc.control_panel.generated.resources.gate_open
+import com.qurkos.gate.controlpanel.ui.model.ConnectionHealth
 import com.qurkos.gate.controlpanel.ui.model.FlapPosition
 import com.qurkos.gate.controlpanel.ui.model.GateTwinUiState
 import org.jetbrains.compose.resources.painterResource
@@ -56,9 +58,14 @@ fun GateTwin(
         label = "gate-flap-progress",
     )
     val emergencyAlpha by animateFloatAsState(
-        targetValue = if (state.emergencyActive) 1f else 0f,
+        targetValue = if (state.emergencyActive && state.connectionHealth == ConnectionHealth.CONNECTED) 1f else 0f,
         animationSpec = tween(if (state.reducedMotion) 1 else 180),
         label = "gate-emergency-state",
+    )
+    val connectedAlpha by animateFloatAsState(
+        targetValue = if (state.connectionHealth == ConnectionHealth.CONNECTED) 1f else 0f,
+        animationSpec = tween(if (state.reducedMotion) 1 else 180),
+        label = "gate-connection-state",
     )
 
     BoxWithConstraints(
@@ -82,6 +89,7 @@ fun GateTwin(
             artworkHeight = artworkHeight,
             openProgress = openProgress,
             emergencyAlpha = emergencyAlpha,
+            connectedAlpha = connectedAlpha,
             modifier = Modifier.align(Alignment.Center),
         )
         GateStateBadge(state, Modifier.align(Alignment.TopStart).padding(18.dp))
@@ -95,28 +103,37 @@ private fun GateArtwork(
     artworkHeight: Dp,
     openProgress: Float,
     emergencyAlpha: Float,
+    connectedAlpha: Float,
     modifier: Modifier,
 ) {
     Box(modifier.size(artworkWidth, artworkHeight)) {
         Image(
+            painter = painterResource(Res.drawable.gate_disconnected),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.FillBounds,
+        )
+        Image(
             painter = painterResource(Res.drawable.gate_closed),
             contentDescription = null,
-            modifier = Modifier.fillMaxSize().graphicsLayer(alpha = 1f - openProgress),
+            modifier = Modifier.fillMaxSize().graphicsLayer(alpha = connectedAlpha * (1f - openProgress)),
             contentScale = ContentScale.FillBounds,
         )
         Image(
             painter = painterResource(Res.drawable.gate_open),
             contentDescription = null,
-            modifier = Modifier.fillMaxSize().graphicsLayer(alpha = openProgress * (1f - emergencyAlpha)),
+            modifier = Modifier.fillMaxSize().graphicsLayer(alpha = connectedAlpha * openProgress * (1f - emergencyAlpha)),
             contentScale = ContentScale.FillBounds,
         )
         Image(
-            painter = painterResource(Res.drawable.gate_emergency),
+            painter = painterResource(Res.drawable.gate_emergency_release),
             contentDescription = null,
             modifier = Modifier.fillMaxSize().graphicsLayer(alpha = emergencyAlpha),
             contentScale = ContentScale.FillBounds,
         )
-        state.passengerProgress?.let { PassengerMarker(it, artworkWidth, artworkHeight) }
+        if (state.connectionHealth == ConnectionHealth.CONNECTED) {
+            state.passengerProgress?.let { PassengerMarker(it, artworkWidth, artworkHeight) }
+        }
     }
 }
 
@@ -148,6 +165,14 @@ private fun GateStateBadge(
     state: GateTwinUiState,
     modifier: Modifier,
 ) {
+    val (title, accent) =
+        when {
+            state.connectionHealth == ConnectionHealth.DISCONNECTED -> "GATE DISCONNECTED" to MaterialTheme.colorScheme.error
+            state.connectionHealth == ConnectionHealth.CONNECTING -> "VERIFYING GCU" to MaterialTheme.colorScheme.tertiary
+            state.connectionHealth == ConnectionHealth.DEGRADED -> "CONNECTION FAILED" to MaterialTheme.colorScheme.error
+            state.emergencyActive -> "EMERGENCY RELEASE" to MaterialTheme.colorScheme.primary
+            else -> "GCU CONNECTED" to MaterialTheme.colorScheme.secondary
+        }
     Surface(
         modifier = modifier,
         color = MaterialTheme.colorScheme.surface.copy(alpha = .94f),
@@ -155,16 +180,23 @@ private fun GateStateBadge(
         border =
             androidx.compose.foundation.BorderStroke(
                 1.dp,
-                if (state.emergencyActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline,
+                accent,
             ),
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(
-                if (state.emergencyActive) "EMERGENCY RELEASE" else "Gate mechanism",
+                title,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (state.emergencyActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                color = accent,
             )
-            Text(state.leftFlap.displayName(), style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (state.connectionHealth == ConnectionHealth.CONNECTED) {
+                    "${state.leftFlap.displayName()} · ${state.lamp.name.lowercase().replaceFirstChar(Char::uppercase)} indicator"
+                } else {
+                    "Commands unavailable"
+                },
+                style = MaterialTheme.typography.titleSmall,
+            )
         }
     }
 }

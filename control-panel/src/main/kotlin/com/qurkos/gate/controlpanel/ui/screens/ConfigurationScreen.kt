@@ -27,6 +27,7 @@ import com.qurkos.gate.controlpanel.ui.model.ControlPanelUiState
 import com.qurkos.gate.controlpanel.ui.model.GateConfigurationUi
 import com.qurkos.gate.controlpanel.ui.model.PuloonInputRules
 import com.qurkos.gate.controlpanel.ui.model.hasValidInputs
+import com.qurkos.gate.sdk.GateCapability
 
 /** Operational and serial configuration form with explicit save and discard semantics. */
 @Composable
@@ -67,8 +68,8 @@ internal fun ConfigurationScreen(
         }
         when (selectedSection) {
             ConfigurationSection.CONNECTION -> SerialSettings(state, callbacks)
-            ConfigurationSection.PASSAGE -> TimingSettings(state.configuration, callbacks)
-            ConfigurationSection.CONTROLLER -> ControllerSettings(state.configuration, callbacks)
+            ConfigurationSection.PASSAGE -> TimingSettings(state, callbacks)
+            ConfigurationSection.CONTROLLER -> ControllerSettings(state, callbacks)
             ConfigurationSection.MAINTENANCE -> SafetySettings(state.configuration, callbacks)
         }
     }
@@ -76,17 +77,110 @@ internal fun ConfigurationScreen(
 
 @Composable
 private fun ControllerSettings(
-    configuration: GateConfigurationUi,
+    state: ControlPanelUiState,
     callbacks: ControlPanelCallbacks,
 ) {
+    val configuration = state.configuration
+
     fun update(value: GateConfigurationUi) = callbacks.onConfigurationChanged(value.copy(hasUnsavedChanges = true))
     SettingsSection("Controller settings", "Applied through typed SDK operations when a gate is connected") {
-        ControllerNumericSettings(configuration, ::update)
-        ToggleSetting("Normal-open mode", "Keep the barrier normally open", configuration.normalOpenMode) {
-            update(configuration.copy(normalOpenMode = it))
+        if (GateCapability.SAFETY_REGION in state.supportedCapabilities) {
+            OptionDropdown(
+                "Safety region",
+                configuration.safetyRegion,
+                { update(configuration.copy(safetyRegion = it)) },
+                state.supportedSafetyRegions.sorted().map { SelectionOption(it.toString(), "Region $it") },
+            )
         }
-        ToggleSetting("Child detection", "Enable child-height safety behavior", configuration.childDetection) {
-            update(configuration.copy(childDetection = it))
+        if (GateCapability.UPS_SHUTDOWN in state.supportedCapabilities) {
+            NumericSettingField(
+                "UPS shutdown delay (s)",
+                configuration.upsShutdownDelaySeconds,
+                { update(configuration.copy(upsShutdownDelaySeconds = it)) },
+                PuloonInputRules.upsShutdownDelay,
+            )
+        }
+        if (GateCapability.STANDBY in state.supportedCapabilities) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                NumericSettingField(
+                    "Standby timeout (s)",
+                    configuration.standbyTimeoutSeconds,
+                    { update(configuration.copy(standbyTimeoutSeconds = it)) },
+                    PuloonInputRules.standbyTimeout,
+                    Modifier.weight(1f),
+                )
+                PassModeDropdown(
+                    "Standby passage mode",
+                    configuration.standbyPassMode,
+                    { update(configuration.copy(standbyPassMode = it)) },
+                    Modifier.weight(1f),
+                    state.supportedPassModes,
+                )
+            }
+        }
+        if (GateCapability.SETTINGS in state.supportedCapabilities) {
+            ControllerParameterSettings(configuration, ::update)
+        }
+    }
+}
+
+@Composable
+private fun ControllerParameterSettings(
+    configuration: GateConfigurationUi,
+    update: (GateConfigurationUi) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            NumericSettingField(
+                "No-entry timeout (s)",
+                configuration.noEntryTimeoutSeconds,
+                { update(configuration.copy(noEntryTimeoutSeconds = it)) },
+                PuloonInputRules.noEntryTimeout,
+                Modifier.weight(1f),
+            )
+            NumericSettingField(
+                "Buzzer timeout (raw units)",
+                configuration.buzzerTimeoutUnits,
+                { update(configuration.copy(buzzerTimeoutUnits = it)) },
+                PuloonInputRules.buzzerTimeout,
+                Modifier.weight(1f),
+            )
+            NumericSettingField(
+                "Safety timeout (s, 255 = disabled)",
+                configuration.safetyRegionTimeoutSeconds,
+                { update(configuration.copy(safetyRegionTimeoutSeconds = it)) },
+                PuloonInputRules.safetyRegionTimeout,
+                Modifier.weight(1f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            OptionDropdown(
+                "Tailing sensitivity",
+                configuration.tailingSensitivity,
+                { update(configuration.copy(tailingSensitivity = it)) },
+                TAILING_LEVEL_OPTIONS,
+                Modifier.weight(1f),
+            )
+            OptionDropdown(
+                "Hurry-up level",
+                configuration.hurryUpLevel,
+                { update(configuration.copy(hurryUpLevel = it)) },
+                HURRY_UP_LEVEL_OPTIONS,
+                Modifier.weight(1f),
+            )
+        }
+        if (configuration.mechanism != "SWING") {
+            ToggleSetting("Normal-open mode", "Keep the barrier normally open", configuration.normalOpenMode) {
+                update(configuration.copy(normalOpenMode = it))
+            }
+        }
+        if (configuration.site == "CHINA" && configuration.childSensorsInstalled) {
+            OptionDropdown(
+                "Child detection",
+                configuration.childDetectionLevel,
+                { update(configuration.copy(childDetectionLevel = it)) },
+                CHILD_DETECTION_OPTIONS,
+            )
         }
         ToggleSetting(
             "Tag timeout from last tag",
@@ -97,88 +191,55 @@ private fun ControllerSettings(
 }
 
 @Composable
-private fun ControllerNumericSettings(
-    configuration: GateConfigurationUi,
-    update: (GateConfigurationUi) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            OptionDropdown(
-                "Safety region",
-                configuration.safetyRegion,
-                { update(configuration.copy(safetyRegion = it)) },
-                SAFETY_REGION_OPTIONS,
-                Modifier.weight(1f),
-            )
-            NumericSettingField(
-                "UPS shutdown delay (s)",
-                configuration.upsShutdownDelaySeconds,
-                { update(configuration.copy(upsShutdownDelaySeconds = it)) },
-                PuloonInputRules.upsShutdownDelay,
-                Modifier.weight(1f),
-            )
-            NumericSettingField(
-                "Standby timeout (s)",
-                configuration.standbyTimeoutSeconds,
-                { update(configuration.copy(standbyTimeoutSeconds = it)) },
-                PuloonInputRules.standbyTimeout,
-                Modifier.weight(1f),
-            )
-        }
-        PassModeDropdown(
-            "Standby passage mode",
-            configuration.standbyPassMode,
-            { update(configuration.copy(standbyPassMode = it)) },
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            NumericSettingField(
-                "Sensor sensitivity",
-                configuration.sensorSensitivity,
-                { update(configuration.copy(sensorSensitivity = it)) },
-                PuloonInputRules.byteSetting,
-                Modifier.weight(1f),
-            )
-            NumericSettingField(
-                "Passage timeout (s)",
-                configuration.passageTimeoutSeconds,
-                { update(configuration.copy(passageTimeoutSeconds = it)) },
-                PuloonInputRules.byteSetting,
-                Modifier.weight(1f),
-            )
-            NumericSettingField(
-                "Child height",
-                configuration.childHeight,
-                { update(configuration.copy(childHeight = it)) },
-                PuloonInputRules.byteSetting,
-                Modifier.weight(1f),
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            OptionDropdown(
-                "Tailing sensitivity",
-                configuration.tailingSensitivity,
-                { update(configuration.copy(tailingSensitivity = it)) },
-                LEVEL_OPTIONS,
-                Modifier.weight(1f),
-            )
-            OptionDropdown(
-                "Hurry-up level",
-                configuration.hurryUpLevel,
-                { update(configuration.copy(hurryUpLevel = it)) },
-                LEVEL_OPTIONS,
-                Modifier.weight(1f),
-            )
-        }
-    }
-}
-
-@Composable
+@Suppress("LongMethod") // Keeps mutually dependent connection/profile controls in one settings section.
 private fun SerialSettings(
     state: ControlPanelUiState,
     callbacks: ControlPanelCallbacks,
 ) {
     val configuration = state.configuration
     SettingsSection("Connection", "Serial transport and retry behavior") {
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            OptionDropdown(
+                "Gate mechanism",
+                configuration.mechanism,
+                { callbacks.onConfigurationChanged(configuration.copy(mechanism = it, hasUnsavedChanges = true)) },
+                listOf(SelectionOption("SECTOR", "SectorDoor"), SelectionOption("SWING", "SwingDoor")),
+                Modifier.weight(1f),
+            )
+            OptionDropdown(
+                "Controller profile",
+                configuration.site,
+                { callbacks.onConfigurationChanged(configuration.copy(site = it, hasUnsavedChanges = true)) },
+                listOf(
+                    SelectionOption("GENERIC", "Generic"),
+                    SelectionOption("INDIA", "India"),
+                    SelectionOption("KOLKATA_INDIA", "Kolkata, India"),
+                    SelectionOption("CHINA", "China"),
+                ),
+                Modifier.weight(1f),
+            )
+        }
+        if (configuration.site == "INDIA" || configuration.site == "KOLKATA_INDIA") {
+            ToggleSetting("UPS installed", "Enables the India-profile UPS fields and command", configuration.upsInstalled) {
+                callbacks.onConfigurationChanged(configuration.copy(upsInstalled = it, hasUnsavedChanges = true))
+            }
+            ToggleSetting(
+                "Token control unit installed",
+                "Enables TCU counters, sensors, return cup, and diagnostic lamp",
+                configuration.tokenControlUnitInstalled,
+            ) {
+                callbacks.onConfigurationChanged(configuration.copy(tokenControlUnitInstalled = it, hasUnsavedChanges = true))
+            }
+        }
+        if (configuration.site == "CHINA") {
+            ToggleSetting(
+                "Child-sensor module installed",
+                "Enables the China-profile optional child sensor bank",
+                configuration.childSensorsInstalled,
+            ) {
+                callbacks.onConfigurationChanged(configuration.copy(childSensorsInstalled = it, hasUnsavedChanges = true))
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             SerialPortDropdown(
                 selectedPort = configuration.serialPort,
@@ -226,30 +287,36 @@ private fun SerialSettings(
 
 @Composable
 private fun TimingSettings(
-    configuration: GateConfigurationUi,
+    state: ControlPanelUiState,
     callbacks: ControlPanelCallbacks,
 ) {
+    val configuration = state.configuration
     SettingsSection("Passage", "Mode and mechanical timing") {
-        PassModeDropdown(
-            "Passage mode",
-            configuration.passageMode,
-            { callbacks.onConfigurationChanged(configuration.copy(passageMode = it, hasUnsavedChanges = true)) },
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            NumericSettingField(
-                "Open duration (ms)",
-                configuration.openDurationMs,
-                { callbacks.onConfigurationChanged(configuration.copy(openDurationMs = it, hasUnsavedChanges = true)) },
-                PuloonInputRules.doorTiming,
-                Modifier.weight(1f),
+        if (GateCapability.PASS_MODE in state.supportedCapabilities) {
+            PassModeDropdown(
+                "Passage mode",
+                configuration.passageMode,
+                { callbacks.onConfigurationChanged(configuration.copy(passageMode = it, hasUnsavedChanges = true)) },
+                modes = state.supportedPassModes,
             )
-            NumericSettingField(
-                "Close delay (ms)",
-                configuration.closeDelayMs,
-                { callbacks.onConfigurationChanged(configuration.copy(closeDelayMs = it, hasUnsavedChanges = true)) },
-                PuloonInputRules.doorTiming,
-                Modifier.weight(1f),
-            )
+        }
+        if (GateCapability.DOOR_TIMING in state.supportedCapabilities) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                NumericSettingField(
+                    "Open duration (ms)",
+                    configuration.openDurationMs,
+                    { callbacks.onConfigurationChanged(configuration.copy(openDurationMs = it, hasUnsavedChanges = true)) },
+                    PuloonInputRules.doorTiming,
+                    Modifier.weight(1f),
+                )
+                NumericSettingField(
+                    "Close delay (ms)",
+                    configuration.closeDelayMs,
+                    { callbacks.onConfigurationChanged(configuration.copy(closeDelayMs = it, hasUnsavedChanges = true)) },
+                    PuloonInputRules.doorTiming,
+                    Modifier.weight(1f),
+                )
+            }
         }
     }
 }

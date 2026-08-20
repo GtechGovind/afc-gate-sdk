@@ -32,13 +32,13 @@ a file dependency:
 
 ```kotlin
 dependencies {
-    implementation(files("libs/afc-gate-control-panel-1.0.0.jar"))
+    implementation(files("libs/afc-gate-control-panel-1.0.1.jar"))
 }
 ```
 
 The JAR contains the compiled control-panel classes and Compose resources. The
 consuming application remains responsible for its Compose Desktop runtime and
-the `com.qurkos.afc:afc-gate-sdk:1.0.0` dependency; file dependencies do not
+the `com.qurkos.afc:afc-gate-sdk:1.0.1` dependency; file dependencies do not
 carry Maven transitive metadata.
 
 ## Hardware operation
@@ -53,12 +53,13 @@ Puloon `Gate` with the public factory and routes actions as follows:
 | Allow Entry | `Gate.allowEntry()` |
 | Allow Exit | `Gate.allowExit()` |
 | Reject Passage | `Gate.rejectPassage(GateDirection.ENTRY)` |
-| Emergency Stop | `Gate.setEmergency(true)` |
-| Reset Emergency | `Gate.setEmergency(false)` |
+| Emergency Release | `Gate.setEmergency(true)` |
+| Clear Emergency Release | `Gate.setEmergency(false)` |
 | Connect / Disconnect | `Gate.connect()` / `Gate.disconnect()` |
 | Door diagnostic | `Gate.runDiagnostic(GateDiagnostic.Door(...))` |
-| Lamp diagnostic | `Gate.runDiagnostic(GateDiagnostic.Lamp(...))` |
-| Buzzer diagnostic | `Gate.runDiagnostic(GateDiagnostic.Buzzer)` |
+| End-display diagnostic | `Gate.runDiagnostic(GateDiagnostic.EndDisplay(...))` |
+| Direction-indicator diagnostic | `Gate.runDiagnostic(GateDiagnostic.Indicator(...))` |
+| Buzzer diagnostic | `Gate.runDiagnostic(GateDiagnostic.Buzzer(index, enabled))` |
 
 Commands are disabled while an operation is in flight. A missing connection,
 unsupported capability, timeout, protocol rejection, or transport failure is
@@ -67,6 +68,8 @@ shown as a typed operational message rather than thrown through the UI.
 ## Safety boundaries
 
 - Hardware commands require an explicit connection.
+- Connected state requires a valid GCU status handshake, not only an open port.
+- Unsupported controls and finite choices are omitted using `GateSdk.support`.
 - The UI contains no simulator, fake transport, or simulated connected state.
 - Motion begins only after a successful SDK result or validated status update.
 - Emergency activation and reset require a continuous three-second hold.
@@ -109,6 +112,6 @@ and `GateTwin` is a reusable state renderer shared by Live Control and Sensors.
 
 The module compiles with warnings as errors. Controller tests inject a fake
 implementation of the public `Gate` contract and cover connection enforcement,
-identity and status mapping, all 16 sensors, entry, exit, rejection, emergency,
+identity and status mapping, all 18 base SectorDoor sensors plus profile-specific optional inputs, entry, exit, rejection, emergency,
 reset, diagnostics, failures, and lifecycle behavior without opening a port.
 Real-device HIL checks remain an explicit commissioning activity.

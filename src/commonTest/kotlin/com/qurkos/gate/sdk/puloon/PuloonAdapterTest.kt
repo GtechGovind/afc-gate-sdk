@@ -3,6 +3,7 @@ package com.qurkos.gate.sdk.puloon
 import com.qurkos.gate.sdk.GateClock
 import com.qurkos.gate.sdk.GateDeviceConfig
 import com.qurkos.gate.sdk.GateDiagnostic
+import com.qurkos.gate.sdk.GateDoorTestAction
 import com.qurkos.gate.sdk.GateDoorTiming
 import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateMechanism
@@ -64,7 +65,7 @@ class PuloonAdapterTest {
                     gate.applySettings(settings),
                     gate.reset(),
                     gate.refreshStatus(),
-                    gate.runDiagnostic(GateDiagnostic.Door(open = true)),
+                    gate.runDiagnostic(GateDiagnostic.Door(GateDoorTestAction.OPEN)),
                     gate.clearPassageCounters(),
                     gate.readSensors(),
                     gate.setPassMode(GatePassMode.CONTROLLED_BOTH),
@@ -96,13 +97,18 @@ class PuloonAdapterTest {
     @Test
     fun passageWriteIsNeverRetriedAfterTimeout() =
         runBlocking {
-            val transport = TestSerialTransport()
+            val transport =
+                TestSerialTransport { request, fake ->
+                    if (request.command == ascii('S')) {
+                        fake.respond(request, byteArrayOf(request.command, ascii('0'), ascii('0')) + baseStatus())
+                    }
+                }
             val gate = createGate(transport, GateHardwareProfile(site = GateSite.INDIA), maintenance = false)
             gate.connect()
 
             assertIs<GateResult.Failure>(gate.allowEntry())
 
-            assertEquals(1, transport.writes.size)
+            assertEquals(1, transport.writes.map(PuloonFrameCodec::decode).count { it.command == ascii('A') })
             gate.disconnect()
             Unit
         }
@@ -168,13 +174,13 @@ class PuloonAdapterTest {
 
     private fun completeSettings(): Set<GateSetting> =
         setOf(
-            GateSetting.SensorSensitivity(15),
+            GateSetting.NoEntryTimeout(100.seconds),
             GateSetting.NormalOpenMode(false),
             GateSetting.HurryUpLevel(2),
             GateSetting.TagTimeoutFromLastTag(true),
             GateSetting.TailingSensitivity(1),
-            GateSetting.PassageTimeout(100.seconds),
-            GateSetting.ChildHeight(null),
-            GateSetting.ChildDetection(false),
+            GateSetting.BuzzerTimeoutUnits(15),
+            GateSetting.SafetyRegionTimeout(100.seconds),
+            GateSetting.ChildDetection(0),
         )
 }

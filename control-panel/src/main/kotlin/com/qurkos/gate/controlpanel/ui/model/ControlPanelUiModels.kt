@@ -1,6 +1,8 @@
 package com.qurkos.gate.controlpanel.ui.model
 
 import androidx.compose.runtime.Immutable
+import com.qurkos.gate.sdk.GateCapability
+import com.qurkos.gate.sdk.GatePassMode
 
 /** Top-level destinations available from the control-panel sidebar. */
 enum class ControlPanelDestination(
@@ -92,6 +94,7 @@ data class GateTwinUiState(
     val sensors: List<GateSensorUi> = defaultGateSensors(),
     val highlightedSensorId: Int? = null,
     val reducedMotion: Boolean = false,
+    val connectionHealth: ConnectionHealth = ConnectionHealth.DISCONNECTED,
 ) {
     init {
         require(leftFlapProgress in 0f..1f) { "Left flap progress must be normalized" }
@@ -135,6 +138,11 @@ data class GateTrafficUi(
 /** Editable operational settings. Values are strings so partially entered form values remain representable. */
 @Immutable
 data class GateConfigurationUi(
+    val mechanism: String = "SECTOR",
+    val site: String = "GENERIC",
+    val upsInstalled: Boolean = false,
+    val tokenControlUnitInstalled: Boolean = false,
+    val childSensorsInstalled: Boolean = false,
     val passageMode: String = "Controlled Both",
     val serialPort: String = "/dev/ttyUSB0",
     val baudRate: String = "57600",
@@ -146,13 +154,13 @@ data class GateConfigurationUi(
     val upsShutdownDelaySeconds: String = "30",
     val standbyTimeoutSeconds: String = "255",
     val standbyPassMode: String = "OUT_OF_SERVICE",
-    val sensorSensitivity: String = "5",
-    val passageTimeoutSeconds: String = "10",
-    val childHeight: String = "120",
+    val noEntryTimeoutSeconds: String = "10",
+    val buzzerTimeoutUnits: String = "100",
+    val safetyRegionTimeoutSeconds: String = "30",
     val tailingSensitivity: String = "1",
     val hurryUpLevel: String = "1",
     val normalOpenMode: Boolean = false,
-    val childDetection: Boolean = true,
+    val childDetectionLevel: String = "0",
     val tagTimeoutFromLastTag: Boolean = true,
     val reconnectAutomatically: Boolean = true,
     val maintenanceOperationsEnabled: Boolean = false,
@@ -168,6 +176,7 @@ data class DiagnosticTestUi(
     val requiresMaintenance: Boolean = false,
     val state: DiagnosticState = DiagnosticState.IDLE,
     val result: String? = null,
+    val requiredCapability: GateCapability,
 )
 
 enum class DiagnosticState { IDLE, RUNNING, PASSED, FAILED }
@@ -190,25 +199,35 @@ data class ControlPanelUiState(
     val passengerCount: Int? = null,
     val upsChargePercent: Int? = null,
     val upsRuntimeMinutes: Int? = null,
+    val controllerStatusDetail: String = "Waiting for status",
+    val powerStatusDetail: String = "Not configured",
+    val tokenStatusDetail: String = "Not configured",
     val gateTwin: GateTwinUiState = GateTwinUiState(),
     val events: List<GateEventUi> = emptyList(),
     val traffic: List<GateTrafficUi> = emptyList(),
     val configuration: GateConfigurationUi = GateConfigurationUi(),
     val availableSerialPorts: List<SerialPortOptionUi> = emptyList(),
     val serialPortDiscoveryError: String? = null,
-    val diagnostics: List<DiagnosticTestUi> = defaultDiagnostics(),
+    val diagnostics: List<DiagnosticTestUi> = emptyList(),
     val sensorGroupFilter: SensorGroup? = null,
     val eventSeverityFilter: EventSeverity? = null,
     val eventSearchQuery: String = "",
     val commandInProgress: Boolean = false,
     val safetyHoldProgress: Float = 0f,
     val transientMessage: String? = null,
+    val supportedCapabilities: Set<GateCapability> = emptySet(),
+    val supportedPassModes: Set<GatePassMode> = emptySet(),
+    val supportedSafetyRegions: Set<Int> = emptySet(),
+    val passagePassengerCount: Int = 1,
+    val passageLampColor: String = "GREEN",
+    val rejectDirection: String = "ENTRY",
 ) {
     init {
         require(passengerCount == null || passengerCount >= 0) { "Passenger count cannot be negative" }
         require(upsChargePercent == null || upsChargePercent in 0..100) { "UPS charge must be a percentage" }
         require(upsRuntimeMinutes == null || upsRuntimeMinutes >= 0) { "UPS runtime cannot be negative" }
         require(safetyHoldProgress in 0f..1f) { "Hold progress must be normalized" }
+        require(passagePassengerCount in 1..99) { "Passage passenger count must be between 1 and 99" }
     }
 }
 
@@ -219,6 +238,12 @@ interface ControlPanelCallbacks {
     fun onAllowEntry()
 
     fun onAllowExit()
+
+    fun onPassagePassengerCountChanged(value: Int)
+
+    fun onPassageLampColorChanged(value: String)
+
+    fun onRejectDirectionChanged(value: String)
 
     fun onReject()
 
@@ -263,6 +288,12 @@ object NoOpControlPanelCallbacks : ControlPanelCallbacks {
 
     override fun onAllowExit() = Unit
 
+    override fun onPassagePassengerCountChanged(value: Int) = Unit
+
+    override fun onPassageLampColorChanged(value: String) = Unit
+
+    override fun onRejectDirectionChanged(value: String) = Unit
+
     override fun onReject() = Unit
 
     override fun onEmergencyStop() = Unit
@@ -299,25 +330,33 @@ object NoOpControlPanelCallbacks : ControlPanelCallbacks {
 }
 
 /** Complete ordered controller sensor inventory used by the external sensor panel. */
-fun defaultGateSensors(): List<GateSensorUi> =
-    listOf(
-        sensor(1, "EA-L", "Entry approach left", "Left entry approach beam", SensorGroup.ENTRY),
-        sensor(2, "EA-R", "Entry approach right", "Right entry approach beam", SensorGroup.ENTRY),
-        sensor(3, "EP-L", "Entry presence left", "Left entry presence beam", SensorGroup.ENTRY),
-        sensor(4, "EP-R", "Entry presence right", "Right entry presence beam", SensorGroup.ENTRY),
-        sensor(5, "ES-L", "Entry safety left", "Left leading safety beam", SensorGroup.SAFETY),
-        sensor(6, "ES-R", "Entry safety right", "Right leading safety beam", SensorGroup.SAFETY),
-        sensor(7, "CP-L", "Center presence left", "Left center passage beam", SensorGroup.PASSAGE),
-        sensor(8, "CP-R", "Center presence right", "Right center passage beam", SensorGroup.PASSAGE),
-        sensor(9, "XS-L", "Exit safety left", "Left trailing safety beam", SensorGroup.SAFETY),
-        sensor(10, "XS-R", "Exit safety right", "Right trailing safety beam", SensorGroup.SAFETY),
-        sensor(11, "XP-L", "Exit presence left", "Left exit presence beam", SensorGroup.EXIT),
-        sensor(12, "XP-R", "Exit presence right", "Right exit presence beam", SensorGroup.EXIT),
-        sensor(13, "XA-L", "Exit approach left", "Left exit approach beam", SensorGroup.EXIT),
-        sensor(14, "XA-R", "Exit approach right", "Right exit approach beam", SensorGroup.EXIT),
-        sensor(15, "CH-L", "Child safety left", "Low-height left child safety beam", SensorGroup.SAFETY),
-        sensor(16, "CH-R", "Child safety right", "Low-height right child safety beam", SensorGroup.SAFETY),
-    )
+fun defaultGateSensors(): List<GateSensorUi> = gateSensors((1..19).filter { it != 10 }.toSet())
+
+internal fun gateSensors(ids: Set<Int>): List<GateSensorUi> =
+    ids.sorted().map { id ->
+        val name =
+            when (id) {
+                10, 20, 21, 22 -> "Child/optional sensor ${id.toString().padStart(2, '0')}"
+                23, 24 -> "SwingDoor sensor $id"
+                25 -> "TCU path A sensor"
+                26 -> "TCU path B sensor"
+                else -> "Sensor ${id.toString().padStart(2, '0')}"
+            }
+        sensor(
+            id = id,
+            code = if (id <= 24) "S${id.toString().padStart(2, '0')}" else "TCU-${if (id == 25) "A" else "B"}",
+            name = name,
+            description = "Puloon GCU profile-specific physical input",
+            group =
+                when (id) {
+                    in 1..6 -> SensorGroup.ENTRY
+                    in 7..13, in 20..22 -> SensorGroup.SAFETY
+                    in 14..19 -> SensorGroup.EXIT
+                    23, 24 -> SensorGroup.MECHANISM
+                    else -> SensorGroup.SECURITY
+                },
+        )
+    }
 
 private fun sensor(
     id: Int,
@@ -327,22 +366,187 @@ private fun sensor(
     group: SensorGroup,
 ) = GateSensorUi(id, code, name, description, group)
 
-private fun defaultDiagnostics(): List<DiagnosticTestUi> =
+@Suppress("LongMethod") // Complete documented diagnostic inventory remains auditable in wire-command order.
+internal fun diagnosticsFor(
+    capabilities: Set<GateCapability>,
+    tokenControlUnitInstalled: Boolean,
+): List<DiagnosticTestUi> =
     listOf(
-        DiagnosticTestUi("initialize", "Initialize controller", "Run the vendor initialization sequence", true),
-        DiagnosticTestUi("firmware", "Firmware identity", "Read model and firmware version"),
-        DiagnosticTestUi("status", "Live status", "Refresh normalized gate status and counters"),
-        DiagnosticTestUi("clock-read", "Read RTC", "Read the controller real-time clock"),
-        DiagnosticTestUi("clock-sync", "Synchronize RTC", "Set controller RTC from this workstation", true),
-        DiagnosticTestUi("standby-read", "Read standby", "Read standby timeout and passage mode"),
-        DiagnosticTestUi("timing-read", "Read door timing", "Read opening and closing delays"),
-        DiagnosticTestUi("settings-read", "Read settings", "Read the typed controller settings block"),
-        DiagnosticTestUi("clear-counters", "Clear counters", "Reset accumulated entry and exit counters", true),
-        DiagnosticTestUi("left-flap", "Left flap actuator", "Open, hold, and close the left flap", true),
-        DiagnosticTestUi("right-flap", "Right flap actuator", "Open, hold, and close the right flap", true),
-        DiagnosticTestUi("sensor-bank", "Sensor bank", "Verify all sixteen sensor channels"),
-        DiagnosticTestUi("lamps", "Direction lamps", "Cycle green, red, amber, and blue indicators", true),
-        DiagnosticTestUi("buzzer", "Warning buzzer", "Play the maintenance warning sequence", true),
-        DiagnosticTestUi("ups", "UPS and power", "Read UPS health and estimated runtime"),
-        DiagnosticTestUi("reset", "Controller reset", "Run the opt-in controller reset operation", true),
-    )
+        DiagnosticTestUi(
+            "initialize",
+            "Initialize controller",
+            "Run sensor, indicator, buzzer, and door initialization",
+            true,
+            requiredCapability = GateCapability.INITIALIZE,
+        ),
+        DiagnosticTestUi(
+            "firmware",
+            "Firmware identity",
+            "Read the five-byte firmware version",
+            requiredCapability = GateCapability.FIRMWARE,
+        ),
+        DiagnosticTestUi(
+            "status",
+            "Live status",
+            "Refresh gate status, errors, switches, and counters",
+            requiredCapability = GateCapability.STATUS,
+        ),
+        DiagnosticTestUi("clock-read", "Read RTC", "Read the India-profile controller clock", requiredCapability = GateCapability.CLOCK),
+        DiagnosticTestUi(
+            "clock-sync",
+            "Synchronize RTC",
+            "Set the India-profile controller clock",
+            true,
+            requiredCapability = GateCapability.CLOCK,
+        ),
+        DiagnosticTestUi("standby-read", "Read standby", "Read the Kolkata standby policy", requiredCapability = GateCapability.STANDBY),
+        DiagnosticTestUi(
+            "timing-read",
+            "Read door timing",
+            "Read opening and closing delays",
+            requiredCapability = GateCapability.DOOR_TIMING,
+        ),
+        DiagnosticTestUi(
+            "settings-read",
+            "Read parameters",
+            "Read the complete 12-byte parameter block",
+            requiredCapability = GateCapability.SETTINGS,
+        ),
+        DiagnosticTestUi(
+            "clear-counters",
+            "Clear counters",
+            "Clear counts; the controller may close the door",
+            true,
+            requiredCapability = GateCapability.PASSAGE_COUNTERS,
+        ),
+        DiagnosticTestUi(
+            "sensor-bank",
+            "Sensor status",
+            "Read active and individually faulted profile sensors",
+            requiredCapability = GateCapability.SENSORS,
+        ),
+        DiagnosticTestUi("door-open", "Door open test", "Run T/01 door-open output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi(
+            "door-close",
+            "Door close test",
+            "Run T/02 door-close output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi("door-free", "Door free test", "Run T/03 door-free output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi("door-lock", "Door lock test", "Run T/04 door-lock output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi(
+            "indicator-green-on",
+            "Green indicator ON",
+            "Run T/21 direction indicator output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "indicator-green-off",
+            "Green indicator OFF",
+            "Run T/22 direction indicator output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "indicator-blue-on",
+            "Blue indicator ON",
+            "Run T/23 direction indicator output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "indicator-blue-off",
+            "Blue indicator OFF",
+            "Run T/24 direction indicator output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "indicator-red-on",
+            "Red indicator ON",
+            "Run T/25 direction indicator output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "indicator-red-off",
+            "Red indicator OFF",
+            "Run T/26 direction indicator output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi("buzzer-1-on", "Buzzer 1 ON", "Run T/31 buzzer output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi("buzzer-1-off", "Buzzer 1 OFF", "Run T/32 buzzer output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi("buzzer-2-on", "Buzzer 2 ON", "Run T/33 buzzer output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi("buzzer-2-off", "Buzzer 2 OFF", "Run T/34 buzzer output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi("buzzer-3-on", "Buzzer 3 ON", "Run T/35 buzzer output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi("buzzer-3-off", "Buzzer 3 OFF", "Run T/36 buzzer output", true, requiredCapability = GateCapability.DIAGNOSTICS),
+        DiagnosticTestUi(
+            "end-green-on",
+            "End display green ON",
+            "Run T/11 end-display output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "end-green-off",
+            "End display green OFF",
+            "Run T/12 end-display output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "end-yellow-on",
+            "End display yellow ON",
+            "Run T/13 end-display output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "end-yellow-off",
+            "End display yellow OFF",
+            "Run T/14 end-display output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "end-red-on",
+            "End display red ON",
+            "Run T/15 end-display output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "end-red-off",
+            "End display red OFF",
+            "Run T/16 end-display output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "return-cup-on",
+            "Return-cup LED ON",
+            "Run T/57 TCU lamp output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "return-cup-off",
+            "Return-cup LED OFF",
+            "Run T/58 TCU lamp output",
+            true,
+            requiredCapability = GateCapability.DIAGNOSTICS,
+        ),
+        DiagnosticTestUi(
+            "ups",
+            "UPS and power",
+            "Read parsed online, battery, and charge status",
+            requiredCapability = GateCapability.UPS_SHUTDOWN,
+        ),
+        DiagnosticTestUi("reset", "Controller reset", "Run the hardware reset operation", true, requiredCapability = GateCapability.RESET),
+    ).filter { test ->
+        test.requiredCapability in capabilities &&
+            (tokenControlUnitInstalled || !test.id.startsWith("return-cup"))
+    }

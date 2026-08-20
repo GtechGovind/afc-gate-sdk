@@ -2,6 +2,17 @@
 
 All notable changes are recorded here. The project follows semantic versioning.
 
+## 1.0.1 - 2026-08-20
+
+- Aligned Puloon GCU commands, settings, status decoding, diagnostics, errors, and sensor handling with interface
+  specification V2.8.
+- Added hardware-profile support discovery so only valid mechanisms, pass modes, settings, sensors, and diagnostics are
+  exposed.
+- Required a valid status handshake before reporting a green connected state and added complete UPS, TCU, passage,
+  occupancy, door-fault, switch, and emergency telemetry.
+- Updated the control panel with profile-aware controls and distinct red disconnected, green connected, and blue
+  emergency-release gate imagery.
+
 ## 1.0.0 - 2026-08-20
 
 - Introduced the unified `com.qurkos.gate.sdk.Gate` API and Kotlin Multiplatform JVM publication.

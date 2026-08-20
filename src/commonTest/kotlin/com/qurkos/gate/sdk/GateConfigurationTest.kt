@@ -52,7 +52,7 @@ class GateConfigurationTest {
                     GateDeviceConfig(
                         vendor = GateVendor.PULOON,
                         serial = SerialConnectionConfig(SerialPortName("fake")),
-                        hardware = GateHardwareProfile(modules = modules),
+                        hardware = GateHardwareProfile(site = GateSite.INDIA, modules = modules),
                     ),
                 ),
             ).value

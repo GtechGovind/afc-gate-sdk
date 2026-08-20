@@ -50,8 +50,8 @@ internal fun DiagnosticsScreen(
                 onClick = callbacks::onDiagnosticRunAll,
                 enabled =
                     connected &&
-                        maintenanceEnabled &&
                         !state.commandInProgress &&
+                        state.diagnostics.isNotEmpty() &&
                         state.diagnostics.none { it.state == DiagnosticState.RUNNING },
             ) {
                 Icon(Icons.Outlined.PlayArrow, null)

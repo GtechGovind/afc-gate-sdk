@@ -17,17 +17,22 @@ import com.qurkos.gate.controlpanel.ui.model.PuloonInputRules
 import com.qurkos.gate.controlpanel.ui.model.SensorGroup
 import com.qurkos.gate.controlpanel.ui.model.SerialPortOptionUi
 import com.qurkos.gate.controlpanel.ui.model.TrafficDirection
+import com.qurkos.gate.controlpanel.ui.model.diagnosticsFor
+import com.qurkos.gate.controlpanel.ui.model.gateSensors
 import com.qurkos.gate.controlpanel.ui.model.hasValidInputs
 import com.qurkos.gate.sdk.Gate
+import com.qurkos.gate.sdk.GateCapability
 import com.qurkos.gate.sdk.GateClock
 import com.qurkos.gate.sdk.GateCommandOutcome
 import com.qurkos.gate.sdk.GateConnectionState
 import com.qurkos.gate.sdk.GateDeviceConfig
 import com.qurkos.gate.sdk.GateDiagnostic
 import com.qurkos.gate.sdk.GateDirection
+import com.qurkos.gate.sdk.GateDoorTestAction
 import com.qurkos.gate.sdk.GateDoorTiming
 import com.qurkos.gate.sdk.GateError
 import com.qurkos.gate.sdk.GateHardwareProfile
+import com.qurkos.gate.sdk.GateLampColor
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
@@ -36,8 +41,11 @@ import com.qurkos.gate.sdk.GateRuntimeOptions
 import com.qurkos.gate.sdk.GateSafetyRegion
 import com.qurkos.gate.sdk.GateSdk
 import com.qurkos.gate.sdk.GateSetting
+import com.qurkos.gate.sdk.GateSite
 import com.qurkos.gate.sdk.GateStandbyPolicy
+import com.qurkos.gate.sdk.GateSupport
 import com.qurkos.gate.sdk.GateVendor
+import com.qurkos.gate.sdk.ReconnectPolicy
 import com.qurkos.gate.sdk.SerialConnectionConfig
 import com.qurkos.gate.sdk.SerialParameters
 import com.qurkos.gate.sdk.SerialPortInfo
@@ -70,12 +78,13 @@ import kotlin.time.Instant
  * connection. Visual motion begins only after the SDK confirms the command; sensors, counters,
  * emergency state, and passage mode are always mapped from validated controller status.
  */
-@Suppress("TooManyFunctions") // Implements the complete, intentionally centralized UI intent contract.
+@Suppress("TooManyFunctions", "LargeClass") // Implements the complete, intentionally centralized UI intent contract.
 class ControlPanelController(
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val gateFactory: (GateDeviceConfig) -> GateResult<Gate> = GateSdk::create,
     private val serialPortProvider: () -> GateResult<List<SerialPortInfo>> = GateSdk::serialPorts,
     private val eventLogExporter: (List<GateEventUi>) -> String? = ::exportEventLog,
+    private val supportProvider: (GateDeviceConfig) -> GateResult<GateSupport> = GateSdk::support,
 ) : ControlPanelCallbacks,
     AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -84,6 +93,7 @@ class ControlPanelController(
     private var hardwareObservers: Job? = null
     private var motionJob: Job? = null
     private var eventSequence = 0L
+    private var savedConfiguration = GateConfigurationUi()
 
     /** Immutable presentation state consumed by Compose. */
     val state: StateFlow<ControlPanelUiState> = mutableState.asStateFlow()
@@ -102,6 +112,7 @@ class ControlPanelController(
                     ),
             )
         }
+        refreshSupport(savedConfiguration)
         onRefreshSerialPorts()
     }
 
@@ -110,19 +121,35 @@ class ControlPanelController(
     }
 
     override fun onAllowEntry() {
-        executeHardware("Entry authorized", { it.allowEntry() }) {
-            animatePassage(PassageDirection.ENTRY)
+        val request = mutableState.value
+        executeHardware("Entry authorized", { it.allowEntry(request.passagePassengerCount, request.passageLampColor.toLampColor()) }) {
+            animatePassage(PassageDirection.ENTRY, request.passageLampColor.toLampColor().toIndicatorLamp())
         }
     }
 
     override fun onAllowExit() {
-        executeHardware("Exit authorized", { it.allowExit() }) {
-            animatePassage(PassageDirection.EXIT)
+        val request = mutableState.value
+        executeHardware("Exit authorized", { it.allowExit(request.passagePassengerCount, request.passageLampColor.toLampColor()) }) {
+            animatePassage(PassageDirection.EXIT, request.passageLampColor.toLampColor().toIndicatorLamp())
         }
     }
 
+    override fun onPassagePassengerCountChanged(value: Int) {
+        mutableState.update { it.copy(passagePassengerCount = value.coerceIn(1, 99)) }
+    }
+
+    override fun onPassageLampColorChanged(value: String) {
+        mutableState.update { it.copy(passageLampColor = value.toLampColor().name) }
+    }
+
+    override fun onRejectDirectionChanged(value: String) {
+        val direction = if (value.equals("EXIT", ignoreCase = true)) "EXIT" else "ENTRY"
+        mutableState.update { it.copy(rejectDirection = direction) }
+    }
+
     override fun onReject() {
-        executeHardware("Passage rejected", { it.rejectPassage(GateDirection.ENTRY) }) {
+        val direction = if (mutableState.value.rejectDirection == "EXIT") GateDirection.EXIT else GateDirection.ENTRY
+        executeHardware("Passage rejected", { it.rejectPassage(direction) }) {
             pulseRejectedLamp()
         }
     }
@@ -159,11 +186,17 @@ class ControlPanelController(
             when (val result = gate.connect()) {
                 is GateResult.Success -> {
                     refreshIdentity(gate)
-                    gate.refreshStatus()
+                    gate.status.value?.let { status -> mutableState.update { it.withHardwareStatus(status) } }
+                    if (GateCapability.SENSORS in gate.capabilities) {
+                        when (val sensors = gate.readSensors()) {
+                            is GateResult.Success -> mutableState.update { it.withSensorStatus(sensors.value) }
+                            is GateResult.Failure -> Unit
+                        }
+                    }
                     mutableState.update {
                         it
                             .copy(commandInProgress = false)
-                            .appendEvent(event("Gate connected", "Serial session established", EventSeverity.SUCCESS))
+                            .appendEvent(event("Gate connected", "GCU status handshake verified", EventSeverity.SUCCESS))
                     }
                 }
 
@@ -177,6 +210,7 @@ class ControlPanelController(
                                 connectionHealth = ConnectionHealth.DISCONNECTED,
                                 commandInProgress = false,
                                 transientMessage = result.error.displayMessage(),
+                                gateTwin = it.gateTwin.copy(connectionHealth = ConnectionHealth.DISCONNECTED, lamp = IndicatorLamp.OFF),
                             ).appendEvent(event("Connection failed", result.error.displayMessage(), EventSeverity.ERROR))
                     }
                 }
@@ -197,7 +231,14 @@ class ControlPanelController(
     }
 
     override fun onConfigurationChanged(configuration: GateConfigurationUi) {
-        mutableState.update { it.copy(configuration = configuration.copy(hasUnsavedChanges = true)) }
+        val current = mutableState.value.configuration
+        if (hardwareGate != null && current.connectionFacts() != configuration.connectionFacts()) {
+            showMessage("Disconnect the gate before changing its connection or hardware profile")
+            return
+        }
+        val normalized = configuration.normalizedProfile().copy(hasUnsavedChanges = true)
+        mutableState.update { it.copy(configuration = normalized) }
+        refreshSupport(normalized)
     }
 
     override fun onRefreshSerialPorts() {
@@ -238,13 +279,15 @@ class ControlPanelController(
                         ),
                     )
             }
+            savedConfiguration = mutableState.value.configuration
             return
         }
         val configuration = mutableState.value.configuration
         mutableState.update { it.copy(commandInProgress = true, transientMessage = null) }
         scope.launch {
             when (val result = applyControllerConfiguration(gate, configuration)) {
-                is GateResult.Success ->
+                is GateResult.Success -> {
+                    savedConfiguration = configuration.copy(hasUnsavedChanges = false)
                     mutableState.update {
                         it
                             .copy(
@@ -259,6 +302,7 @@ class ControlPanelController(
                                 ),
                             )
                     }
+                }
 
                 is GateResult.Failure ->
                     mutableState.update {
@@ -278,7 +322,8 @@ class ControlPanelController(
     }
 
     override fun onDiscardConfiguration() {
-        mutableState.update { it.copy(configuration = GateConfigurationUi()) }
+        mutableState.update { it.copy(configuration = savedConfiguration.copy(hasUnsavedChanges = false)) }
+        refreshSupport(savedConfiguration)
     }
 
     override fun onDiagnosticRun(testId: String) {
@@ -286,7 +331,12 @@ class ControlPanelController(
     }
 
     override fun onDiagnosticRunAll() {
-        runDiagnostics(mutableState.value.diagnostics.map { it.id })
+        val current = mutableState.value
+        runDiagnostics(
+            current.diagnostics
+                .filter { current.configuration.maintenanceOperationsEnabled || !it.requiresMaintenance }
+                .map { it.id },
+        )
     }
 
     override fun onEventSearchChanged(query: String) {
@@ -360,10 +410,16 @@ class ControlPanelController(
     private fun runDiagnostics(ids: List<String>) {
         val gate = connectedGate() ?: return
         if (mutableState.value.commandInProgress) return
+        val available = mutableState.value.diagnostics.associateBy { it.id }
+        val supportedIds = ids.distinct().filter { it in available }
+        if (supportedIds.isEmpty()) {
+            showMessage("This diagnostic is not supported by the selected gate profile")
+            return
+        }
         val maintenanceEnabled = mutableState.value.configuration.maintenanceOperationsEnabled
         if (
             !maintenanceEnabled &&
-            mutableState.value.diagnostics.any { test -> test.id in ids && test.requiresMaintenance }
+            supportedIds.any { available.getValue(it).requiresMaintenance }
         ) {
             showMessage("Enable maintenance operations before actuator diagnostics")
             return
@@ -373,12 +429,12 @@ class ControlPanelController(
                 commandInProgress = true,
                 diagnostics =
                     current.diagnostics.map { test ->
-                        if (test.id in ids) test.copy(state = DiagnosticState.RUNNING, result = "Running on hardware") else test
+                        if (test.id in supportedIds) test.copy(state = DiagnosticState.RUNNING, result = "Running on hardware") else test
                     },
             )
         }
         scope.launch {
-            for (id in ids) {
+            for (id in supportedIds) {
                 val result = performDiagnostic(gate, id)
                 mutableState.update { current ->
                     current.copy(
@@ -401,7 +457,12 @@ class ControlPanelController(
                 it
                     .copy(commandInProgress = false)
                     .appendEvent(
-                        event("Diagnostics completed", "${ids.size} hardware checks", EventSeverity.INFO, EventCategory.DIAGNOSTIC),
+                        event(
+                            "Diagnostics completed",
+                            "${supportedIds.size} hardware checks",
+                            EventSeverity.INFO,
+                            EventCategory.DIAGNOSTIC,
+                        ),
                     )
             }
         }
@@ -421,10 +482,31 @@ class ControlPanelController(
             "timing-read" -> gate.readDoorTiming().asUnit()
             "settings-read" -> gate.readSettings().asUnit()
             "clear-counters" -> gate.clearPassageCounters()
-            "left-flap", "right-flap" -> gate.runDiagnostic(GateDiagnostic.Door(open = true))
+            "door-open" -> gate.runDiagnostic(GateDiagnostic.Door(GateDoorTestAction.OPEN))
+            "door-close" -> gate.runDiagnostic(GateDiagnostic.Door(GateDoorTestAction.CLOSE))
+            "door-free" -> gate.runDiagnostic(GateDiagnostic.Door(GateDoorTestAction.FREE))
+            "door-lock" -> gate.runDiagnostic(GateDiagnostic.Door(GateDoorTestAction.LOCK))
             "sensor-bank" -> gate.readSensors().asUnit()
-            "lamps" -> gate.runDiagnostic(GateDiagnostic.Lamp(index = 1, enabled = true))
-            "buzzer" -> gate.runDiagnostic(GateDiagnostic.Buzzer)
+            "indicator-green-on" -> gate.runDiagnostic(GateDiagnostic.Indicator(GateLampColor.GREEN, true))
+            "indicator-green-off" -> gate.runDiagnostic(GateDiagnostic.Indicator(GateLampColor.GREEN, false))
+            "indicator-blue-on" -> gate.runDiagnostic(GateDiagnostic.Indicator(GateLampColor.BLUE, true))
+            "indicator-blue-off" -> gate.runDiagnostic(GateDiagnostic.Indicator(GateLampColor.BLUE, false))
+            "indicator-red-on" -> gate.runDiagnostic(GateDiagnostic.Indicator(GateLampColor.RED, true))
+            "indicator-red-off" -> gate.runDiagnostic(GateDiagnostic.Indicator(GateLampColor.RED, false))
+            "buzzer-1-on" -> gate.runDiagnostic(GateDiagnostic.Buzzer(1, true))
+            "buzzer-1-off" -> gate.runDiagnostic(GateDiagnostic.Buzzer(1, false))
+            "buzzer-2-on" -> gate.runDiagnostic(GateDiagnostic.Buzzer(2, true))
+            "buzzer-2-off" -> gate.runDiagnostic(GateDiagnostic.Buzzer(2, false))
+            "buzzer-3-on" -> gate.runDiagnostic(GateDiagnostic.Buzzer(3, true))
+            "buzzer-3-off" -> gate.runDiagnostic(GateDiagnostic.Buzzer(3, false))
+            "end-green-on" -> gate.runDiagnostic(GateDiagnostic.EndDisplay(GateLampColor.GREEN, true))
+            "end-green-off" -> gate.runDiagnostic(GateDiagnostic.EndDisplay(GateLampColor.GREEN, false))
+            "end-yellow-on" -> gate.runDiagnostic(GateDiagnostic.EndDisplay(GateLampColor.YELLOW, true))
+            "end-yellow-off" -> gate.runDiagnostic(GateDiagnostic.EndDisplay(GateLampColor.YELLOW, false))
+            "end-red-on" -> gate.runDiagnostic(GateDiagnostic.EndDisplay(GateLampColor.RED, true))
+            "end-red-off" -> gate.runDiagnostic(GateDiagnostic.EndDisplay(GateLampColor.RED, false))
+            "return-cup-on" -> gate.runDiagnostic(GateDiagnostic.ReturnCupLamp(true))
+            "return-cup-off" -> gate.runDiagnostic(GateDiagnostic.ReturnCupLamp(false))
             "ups" -> gate.refreshStatus().asUnit()
             "reset" -> gate.reset()
             else -> GateResult.Failure(GateError.InvalidRequest("Unknown diagnostic: $id"))
@@ -439,15 +521,22 @@ class ControlPanelController(
                 is GateResult.Success -> result.value
                 is GateResult.Failure -> return result
             }
+        val supported = mutableState.value.supportedCapabilities intersect gate.capabilities
         val operations: List<suspend () -> GateResult<Unit>> =
-            listOf(
-                { gate.setPassMode(parsed.passageMode) },
-                { gate.setSafetyRegion(GateSafetyRegion(parsed.safetyRegion)) },
-                { gate.setUpsShutdownDelaySeconds(parsed.upsDelay) },
-                { gate.setStandbyPolicy(GateStandbyPolicy(parsed.standbyTimeout.seconds, parsed.standbyMode)) },
-                { gate.setDoorTiming(GateDoorTiming(parsed.openingDelay.milliseconds, parsed.closingDelay.milliseconds)) },
-                { gate.applySettings(parsed.settings) },
-            )
+            buildList {
+                if (GateCapability.SETTINGS in supported) add { gate.applySettings(parsed.settings) }
+                if (GateCapability.PASS_MODE in supported) add { gate.setPassMode(parsed.passageMode) }
+                if (GateCapability.SAFETY_REGION in supported) {
+                    add { gate.setSafetyRegion(GateSafetyRegion(parsed.safetyRegion)) }
+                }
+                if (GateCapability.UPS_SHUTDOWN in supported) add { gate.setUpsShutdownDelaySeconds(parsed.upsDelay) }
+                if (GateCapability.STANDBY in supported) {
+                    add { gate.setStandbyPolicy(GateStandbyPolicy(parsed.standbyTimeout.seconds, parsed.standbyMode)) }
+                }
+                if (GateCapability.DOOR_TIMING in supported) {
+                    add { gate.setDoorTiming(GateDoorTiming(parsed.openingDelay.milliseconds, parsed.closingDelay.milliseconds)) }
+                }
+            }
         operations.forEach { operation ->
             val result = operation()
             if (result is GateResult.Failure) return result
@@ -455,22 +544,25 @@ class ControlPanelController(
         return GateResult.Success(Unit)
     }
 
-    private suspend fun animatePassage(direction: PassageDirection) {
+    private suspend fun animatePassage(
+        direction: PassageDirection,
+        lamp: IndicatorLamp,
+    ) {
         motionJob?.cancel()
         motionJob =
             scope.launch {
-                updateMotion(FlapPosition.OPENING, 0f, direction, IndicatorLamp.GREEN)
+                updateMotion(FlapPosition.OPENING, 0f, direction, lamp)
                 animateProgress(opening = true)
-                updateMotion(FlapPosition.OPEN, 1f, direction, IndicatorLamp.GREEN)
+                updateMotion(FlapPosition.OPEN, 1f, direction, lamp)
                 repeat(PASSENGER_STEPS) { step ->
                     val progress = (step + 1f) / PASSENGER_STEPS
                     val directionalProgress = if (direction == PassageDirection.ENTRY) progress else 1f - progress
                     mutableState.update { it.copy(gateTwin = it.gateTwin.copy(passengerProgress = directionalProgress)) }
                     delay(PASSENGER_FRAME_MILLIS)
                 }
-                updateMotion(FlapPosition.CLOSING, 1f, direction, IndicatorLamp.GREEN)
+                updateMotion(FlapPosition.CLOSING, 1f, direction, lamp)
                 animateProgress(opening = false)
-                updateMotion(FlapPosition.CLOSED, 0f, null, IndicatorLamp.GREEN)
+                updateMotion(FlapPosition.CLOSED, 0f, null, lamp)
             }
         motionJob?.join()
     }
@@ -480,10 +572,10 @@ class ControlPanelController(
         motionJob =
             scope.launch {
                 if (enabled) {
-                    mutableState.update { it.copy(gateTwin = it.gateTwin.copy(emergencyActive = true, lamp = IndicatorLamp.RED)) }
-                    updateMotion(FlapPosition.OPENING, 0f, null, IndicatorLamp.RED)
+                    mutableState.update { it.copy(gateTwin = it.gateTwin.copy(emergencyActive = true, lamp = IndicatorLamp.BLUE)) }
+                    updateMotion(FlapPosition.OPENING, 0f, null, IndicatorLamp.BLUE)
                     animateProgress(opening = true)
-                    updateMotion(FlapPosition.OPEN, 1f, null, IndicatorLamp.RED)
+                    updateMotion(FlapPosition.OPEN, 1f, null, IndicatorLamp.BLUE)
                 } else {
                     updateMotion(FlapPosition.CLOSING, 1f, null, IndicatorLamp.GREEN)
                     animateProgress(opening = false)
@@ -545,6 +637,12 @@ class ControlPanelController(
             showMessage("Check serial baud rate, timeout, and polling values")
             return null
         }
+        val profile =
+            configuration.toHardwareProfile()
+                ?: run {
+                    showMessage("Select a supported gate mechanism and controller profile")
+                    return null
+                }
         val config =
             GateDeviceConfig(
                 vendor = GateVendor.PULOON,
@@ -553,11 +651,17 @@ class ControlPanelController(
                         SerialPortName(configuration.serialPort),
                         SerialParameters(requireNotNull(baud)),
                     ),
-                hardware = GateHardwareProfile(GateMechanism.FLAP, modules = setOf(GateModule.UPS, GateModule.CHILD_SENSORS)),
+                hardware = profile,
                 runtime =
                     GateRuntimeOptions(
                         responseTimeout = requireNotNull(timeout).milliseconds,
                         statusPollInterval = requireNotNull(polling).milliseconds,
+                        reconnectPolicy =
+                            if (configuration.reconnectAutomatically) {
+                                ReconnectPolicy.ExponentialBackoff()
+                            } else {
+                                ReconnectPolicy.Disabled
+                            },
                     ),
                 maintenanceOperationsEnabled = configuration.maintenanceOperationsEnabled,
             )
@@ -570,18 +674,95 @@ class ControlPanelController(
         }
     }
 
+    private fun refreshSupport(configuration: GateConfigurationUi) {
+        val profile = configuration.toHardwareProfile() ?: return
+        val config =
+            GateDeviceConfig(
+                vendor = GateVendor.PULOON,
+                serial = SerialConnectionConfig(SerialPortName(configuration.serialPort.ifBlank { "support-only" })),
+                hardware = profile,
+                maintenanceOperationsEnabled = configuration.maintenanceOperationsEnabled,
+            )
+        when (val result = supportProvider(config)) {
+            is GateResult.Success -> {
+                val support = result.value
+                mutableState.update { current ->
+                    val passageMode =
+                        current.configuration.passageMode
+                            .toPassMode()
+                            .takeIf { it in support.passModes }
+                            ?: support.passModes.minByOrNull { it.ordinal }
+                    val standbyMode =
+                        current.configuration.standbyPassMode
+                            .toPassMode()
+                            .takeIf { it in support.passModes }
+                            ?: support.passModes.minByOrNull { it.ordinal }
+                    val safetyRegion =
+                        current.configuration.safetyRegion.toIntOrNull().takeIf { selected ->
+                            support.safetyRegions.any { it.number == selected }
+                        } ?: support.safetyRegions.minOfOrNull { it.number }
+                    val existingSensors = current.gateTwin.sensors.associateBy { it.id }
+                    val sensors =
+                        gateSensors(support.sensors.map { it.number }.toSet()).map { sensor ->
+                            existingSensors[sensor.id]?.let { previous ->
+                                sensor.copy(health = previous.health, lastChanged = previous.lastChanged)
+                            } ?: sensor
+                        }
+                    current.copy(
+                        supportedCapabilities = support.capabilities,
+                        supportedPassModes = support.passModes,
+                        supportedSafetyRegions = support.safetyRegions.map { it.number }.toSet(),
+                        diagnostics = diagnosticsFor(support.capabilities, configuration.tokenControlUnitInstalled),
+                        configuration =
+                            current.configuration.copy(
+                                passageMode = passageMode?.name ?: current.configuration.passageMode,
+                                standbyPassMode = standbyMode?.name ?: current.configuration.standbyPassMode,
+                                safetyRegion = safetyRegion?.toString() ?: current.configuration.safetyRegion,
+                            ),
+                        gateTwin = current.gateTwin.copy(sensors = sensors),
+                    )
+                }
+            }
+
+            is GateResult.Failure ->
+                mutableState.update {
+                    it.copy(
+                        supportedCapabilities = emptySet(),
+                        supportedPassModes = emptySet(),
+                        supportedSafetyRegions = emptySet(),
+                        diagnostics = emptyList(),
+                        transientMessage = result.error.displayMessage(),
+                    )
+                }
+        }
+    }
+
     private fun observe(gate: Gate) {
         hardwareObservers?.cancel()
         hardwareObservers =
             scope.launch {
                 launch {
                     gate.connectionState.collectLatest { connection ->
-                        mutableState.update { it.copy(connectionHealth = connection.toUiHealth()) }
+                        val health = connection.toUiHealth()
+                        mutableState.update {
+                            it.copy(
+                                connectionHealth = health,
+                                gateTwin = it.gateTwin.copy(connectionHealth = health),
+                            )
+                        }
                     }
                 }
                 launch {
                     gate.status.collectLatest { status ->
-                        if (status != null) mutableState.update { it.withHardwareStatus(status) }
+                        if (status != null && gate.connectionState.value == GateConnectionState.CONNECTED) {
+                            mutableState.update { it.withHardwareStatus(status) }
+                            if (GateCapability.SENSORS in gate.capabilities) {
+                                when (val result = gate.readSensors()) {
+                                    is GateResult.Success -> mutableState.update { it.withSensorStatus(result.value) }
+                                    is GateResult.Failure -> Unit
+                                }
+                            }
+                        }
                     }
                 }
                 launch {
@@ -620,7 +801,13 @@ class ControlPanelController(
                     .copy(
                         connectionHealth = ConnectionHealth.DISCONNECTED,
                         commandInProgress = false,
-                        gateTwin = it.gateTwin.copy(passengerProgress = null),
+                        gateTwin =
+                            it.gateTwin.copy(
+                                passengerProgress = null,
+                                connectionHealth = ConnectionHealth.DISCONNECTED,
+                                lamp = IndicatorLamp.OFF,
+                                emergencyActive = false,
+                            ),
                     ).appendEvent(event("Gate disconnected", "Serial port released", EventSeverity.INFO))
             }
         }
@@ -754,6 +941,71 @@ private fun String.toPassMode(): GatePassMode? {
     }
 }
 
+private fun String.toLampColor(): GateLampColor = GateLampColor.entries.firstOrNull { it.name == trim().uppercase() } ?: GateLampColor.GREEN
+
+private fun GateLampColor.toIndicatorLamp(): IndicatorLamp =
+    when (this) {
+        GateLampColor.OFF -> IndicatorLamp.OFF
+        GateLampColor.GREEN -> IndicatorLamp.GREEN
+        GateLampColor.BLUE -> IndicatorLamp.BLUE
+        GateLampColor.RED -> IndicatorLamp.RED
+        GateLampColor.YELLOW -> IndicatorLamp.AMBER
+    }
+
+private fun GateConfigurationUi.normalizedProfile(): GateConfigurationUi =
+    when (site) {
+        "INDIA", "KOLKATA_INDIA" -> copy(childSensorsInstalled = false, childDetectionLevel = "0")
+        "CHINA" -> copy(upsInstalled = false, tokenControlUnitInstalled = false)
+        else ->
+            copy(
+                upsInstalled = false,
+                tokenControlUnitInstalled = false,
+                childSensorsInstalled = false,
+                childDetectionLevel = "0",
+            )
+    }.let { if (it.mechanism == "SWING") it.copy(normalOpenMode = false) else it }
+
+private fun GateConfigurationUi.toHardwareProfile(): GateHardwareProfile? {
+    val mechanism = GateMechanism.entries.firstOrNull { it.name == this.mechanism } ?: return null
+    val site = GateSite.entries.firstOrNull { it.name == this.site } ?: return null
+    val modules =
+        buildSet {
+            if (upsInstalled) add(GateModule.UPS)
+            if (tokenControlUnitInstalled) add(GateModule.TOKEN_CONTROL_UNIT)
+            if (childSensorsInstalled) add(GateModule.CHILD_SENSORS)
+        }
+    return GateHardwareProfile(mechanism, site, modules, normalOpenMode)
+}
+
+private data class ConnectionFacts(
+    val mechanism: String,
+    val site: String,
+    val ups: Boolean,
+    val tcu: Boolean,
+    val childSensors: Boolean,
+    val serialPort: String,
+    val baudRate: String,
+    val responseTimeout: String,
+    val pollInterval: String,
+    val reconnectAutomatically: Boolean,
+    val maintenanceEnabled: Boolean,
+)
+
+private fun GateConfigurationUi.connectionFacts(): ConnectionFacts =
+    ConnectionFacts(
+        mechanism,
+        site,
+        upsInstalled,
+        tokenControlUnitInstalled,
+        childSensorsInstalled,
+        serialPort,
+        baudRate,
+        responseTimeoutMs,
+        pollIntervalMs,
+        reconnectAutomatically,
+        maintenanceOperationsEnabled,
+    )
+
 private data class ParsedControllerConfiguration(
     val passageMode: GatePassMode,
     val standbyMode: GatePassMode,
@@ -787,21 +1039,22 @@ private fun GateConfigurationUi.parseControllerConfiguration(): GateResult<Parse
     val closingDelay =
         closeDelayMs.toLongOrNull()?.takeIf { PuloonInputRules.doorTiming.accepts(it.toString()) }
             ?: return invalid("closing delay")
-    val sensitivity = sensorSensitivity.toIntOrNull() ?: return invalid("sensor sensitivity")
-    val passageTimeout = passageTimeoutSeconds.toLongOrNull()?.takeIf { it >= 0 } ?: return invalid("passage timeout")
-    val height = childHeight.toIntOrNull() ?: return invalid("child height")
+    val noEntryTimeout = noEntryTimeoutSeconds.toLongOrNull() ?: return invalid("no-entry timeout")
+    val buzzerTimeout = buzzerTimeoutUnits.toIntOrNull() ?: return invalid("buzzer timeout")
+    val safetyTimeoutRaw = safetyRegionTimeoutSeconds.toLongOrNull() ?: return invalid("safety-region timeout")
+    val childLevel = childDetectionLevel.toIntOrNull() ?: return invalid("child-detection level")
     val tailing = tailingSensitivity.toIntOrNull() ?: return invalid("tailing sensitivity")
     val hurryUp = hurryUpLevel.toIntOrNull() ?: return invalid("hurry-up level")
     val settings =
         setOf(
             GateSetting.NormalOpenMode(normalOpenMode),
-            GateSetting.SensorSensitivity(sensitivity),
-            GateSetting.PassageTimeout(passageTimeout.seconds),
-            GateSetting.ChildDetection(childDetection),
-            GateSetting.ChildHeight(height),
+            GateSetting.NoEntryTimeout(noEntryTimeout.seconds),
+            GateSetting.ChildDetection(childLevel),
             GateSetting.TailingSensitivity(tailing),
             GateSetting.HurryUpLevel(hurryUp),
             GateSetting.TagTimeoutFromLastTag(tagTimeoutFromLastTag),
+            GateSetting.BuzzerTimeoutUnits(buzzerTimeout),
+            GateSetting.SafetyRegionTimeout(safetyTimeoutRaw.takeUnless { it == 255L }?.seconds),
         )
     return GateResult.Success(
         ParsedControllerConfiguration(

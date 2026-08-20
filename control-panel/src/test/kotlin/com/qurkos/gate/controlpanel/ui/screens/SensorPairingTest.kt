@@ -8,24 +8,13 @@ import kotlin.test.assertTrue
 
 class SensorPairingTest {
     @Test
-    fun allSensorsProduceEightOrderedLeftRightPairs() {
+    fun allDocumentedSectorSensorsRemainIndividuallyAddressable() {
         val pairs = pairSensors(defaultGateSensors())
 
-        assertEquals(8, pairs.size)
+        assertEquals(18, pairs.size)
         pairs.forEach { pair ->
-            assertEquals(2, pair.sensors.size)
-            assertTrue(
-                pair.sensors
-                    .first()
-                    .code
-                    .endsWith("-L"),
-            )
-            assertTrue(
-                pair.sensors
-                    .last()
-                    .code
-                    .endsWith("-R"),
-            )
+            assertEquals(1, pair.sensors.size)
+            assertTrue(pair.key.startsWith("S"))
         }
     }
 
@@ -33,7 +22,7 @@ class SensorPairingTest {
     fun filteringByGroupKeepsOnlyPopulatedPairs() {
         val safetyPairs = pairSensors(defaultGateSensors().filter { it.group == SensorGroup.SAFETY })
 
-        assertEquals(listOf("ES", "XS", "CH"), safetyPairs.map { it.key })
+        assertEquals(listOf("S07", "S08", "S09", "S11", "S12", "S13"), safetyPairs.map { it.key })
         assertTrue(safetyPairs.all { it.group == SensorGroup.SAFETY })
     }
 }

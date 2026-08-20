@@ -70,20 +70,20 @@ class PuloonPayloadValidationTest {
     }
 
     @Test
-    fun settingsAcceptBoundariesAndRejectEveryMalformedBoolean() {
+    fun settingsAcceptDocumentedBoundariesAndRejectMalformedFields() {
         val boundaries =
             setOf(
-                GateSetting.SensorSensitivity(255),
+                GateSetting.NoEntryTimeout(999.seconds),
                 GateSetting.NormalOpenMode(true),
-                GateSetting.HurryUpLevel(2),
+                GateSetting.HurryUpLevel(3),
                 GateSetting.TagTimeoutFromLastTag(false),
                 GateSetting.TailingSensitivity(0),
-                GateSetting.PassageTimeout(255.seconds),
-                GateSetting.ChildHeight(255),
-                GateSetting.ChildDetection(true),
+                GateSetting.BuzzerTimeoutUnits(254),
+                GateSetting.SafetyRegionTimeout(null),
+                GateSetting.ChildDetection(2),
             )
         assertEquals(boundaries, PuloonSettingsCodec.decode(PuloonSettingsCodec.encode(boundaries)))
-        listOf(2, 4, 10).forEach { offset ->
+        listOf(0, 3, 4, 5, 6, 7, 9, 11).forEach { offset ->
             val malformed = PuloonSettingsCodec.encode(boundaries).also { it[offset] = ascii('X') }
             assertFailsWith<IllegalArgumentException> { PuloonSettingsCodec.decode(malformed) }
         }
@@ -93,11 +93,11 @@ class PuloonPayloadValidationTest {
     fun incompleteAndOutOfRangeSettingsAreRejected() {
         assertFailsWith<IllegalArgumentException> { PuloonSettingsCodec.encode(emptySet()) }
         assertFailsWith<IllegalArgumentException> {
-            PuloonSettingsCodec.encode(completeSettings().filterNot { it is GateSetting.ChildHeight }.toSet())
+            PuloonSettingsCodec.encode(completeSettings().filterNot { it is GateSetting.ChildDetection }.toSet())
         }
         assertFailsWith<IllegalArgumentException> {
             PuloonSettingsCodec.encode(
-                completeSettings().filterNot { it is GateSetting.HurryUpLevel }.toSet() + GateSetting.HurryUpLevel(3),
+                completeSettings().filterNot { it is GateSetting.HurryUpLevel }.toSet() + GateSetting.HurryUpLevel(4),
             )
         }
     }
@@ -109,13 +109,13 @@ class PuloonPayloadValidationTest {
 
     private fun completeSettings(): Set<GateSetting> =
         setOf(
-            GateSetting.SensorSensitivity(15),
+            GateSetting.NoEntryTimeout(100.seconds),
             GateSetting.NormalOpenMode(false),
             GateSetting.HurryUpLevel(2),
             GateSetting.TagTimeoutFromLastTag(true),
             GateSetting.TailingSensitivity(1),
-            GateSetting.PassageTimeout(100.seconds),
-            GateSetting.ChildHeight(null),
-            GateSetting.ChildDetection(false),
+            GateSetting.BuzzerTimeoutUnits(15),
+            GateSetting.SafetyRegionTimeout(100.seconds),
+            GateSetting.ChildDetection(0),
         )
 }

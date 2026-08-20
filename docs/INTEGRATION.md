@@ -107,8 +107,8 @@ val current = when (val result = gate.readSettings()) {
     is GateResult.Success -> result.value
     is GateResult.Failure -> return result
 }
-val updated = current.filterNot { it is GateSetting.PassageTimeout }.toSet() +
-    GateSetting.PassageTimeout(30.seconds)
+val updated = current.filterNot { it is GateSetting.NoEntryTimeout }.toSet() +
+    GateSetting.NoEntryTimeout(30.seconds)
 return gate.applySettings(updated)
 ```
 

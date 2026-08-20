@@ -28,11 +28,9 @@ public object GateSdk {
                 hardware = config.hardware.copy(modules = config.hardware.modules.toSet()),
             )
         val adapter =
-            when (stableConfig.vendor) {
-                GateVendor.PULOON -> PuloonAdapter(stableConfig.hardware, stableConfig.maintenanceOperationsEnabled)
-                GateVendor.GUNNEBO,
-                GateVendor.INDRA,
-                -> return GateResult.Failure(GateError.UnsupportedVendor(stableConfig.vendor))
+            when (val result = adapter(stableConfig)) {
+                is GateResult.Success -> result.value
+                is GateResult.Failure -> return result
             }
         val serial =
             stableConfig.serial.copy(
@@ -64,4 +62,30 @@ public object GateSdk {
      * @return A snapshot of visible ports, or [GateError.Transport] when platform enumeration fails.
      */
     public fun serialPorts(): GateResult<List<SerialPortInfo>> = availablePlatformSerialPorts()
+
+    /**
+     * Resolves capabilities and finite choices without opening or probing a serial port.
+     *
+     * Applications should use this before rendering configuration and maintenance controls.
+     */
+    public fun support(config: GateDeviceConfig): GateResult<GateSupport> {
+        val stableConfig = config.copy(hardware = config.hardware.copy(modules = config.hardware.modules.toSet()))
+        return adapter(stableConfig).map { it.support }
+    }
+
+    private fun adapter(config: GateDeviceConfig): GateResult<com.qurkos.gate.sdk.internal.GateProtocolAdapter> =
+        when (config.vendor) {
+            GateVendor.PULOON -> {
+                if (config.hardware.mechanism == GateMechanism.FLAP) {
+                    GateResult.Failure(
+                        GateError.InvalidRequest("Puloon GCU supports SectorDoor or SwingDoor, not FLAP"),
+                    )
+                } else {
+                    GateResult.Success(PuloonAdapter(config.hardware, config.maintenanceOperationsEnabled))
+                }
+            }
+            GateVendor.GUNNEBO,
+            GateVendor.INDRA,
+            -> GateResult.Failure(GateError.UnsupportedVendor(config.vendor))
+        }
 }

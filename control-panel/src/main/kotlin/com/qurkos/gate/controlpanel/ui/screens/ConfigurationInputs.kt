@@ -127,12 +127,13 @@ internal fun PassModeDropdown(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
+    modes: Collection<GatePassMode> = GatePassMode.entries,
 ) {
     OptionDropdown(
         label = label,
         value = value,
         onValueChange = onValueChange,
-        options = GatePassMode.entries.map { SelectionOption(it.name, it.displayName()) },
+        options = modes.map { SelectionOption(it.name, it.displayName()) },
         modifier = modifier,
     )
 }
@@ -200,8 +201,14 @@ internal data class SelectionOption(
     val label: String,
 )
 
-internal val SAFETY_REGION_OPTIONS = (1..3).map { SelectionOption(it.toString(), "Region $it") }
-internal val LEVEL_OPTIONS = (0..2).map { SelectionOption(it.toString(), "Level $it") }
+internal val TAILING_LEVEL_OPTIONS = (0..1).map { SelectionOption(it.toString(), "Level $it") }
+internal val HURRY_UP_LEVEL_OPTIONS = (0..3).map { SelectionOption(it.toString(), "Level $it") }
+internal val CHILD_DETECTION_OPTIONS =
+    listOf(
+        SelectionOption("0", "Disabled"),
+        SelectionOption("1", "Level 1"),
+        SelectionOption("2", "Level 2"),
+    )
 
 private fun String.toPassModeLabel(): String {
     val normalized = trim().uppercase().replace(' ', '_').replace('-', '_')

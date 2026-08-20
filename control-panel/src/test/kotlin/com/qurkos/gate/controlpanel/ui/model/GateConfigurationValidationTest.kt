@@ -17,7 +17,7 @@ class GateConfigurationValidationTest {
 
     @Test
     fun rejectsOutOfRangeControllerLevels() {
-        assertFalse(GateConfigurationUi(hurryUpLevel = "3").hasValidInputs())
+        assertFalse(GateConfigurationUi(hurryUpLevel = "4").hasValidInputs())
         assertFalse(GateConfigurationUi(tailingSensitivity = "-1").hasValidInputs())
     }
 

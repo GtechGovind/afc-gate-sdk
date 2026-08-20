@@ -89,7 +89,7 @@ class PuloonFrameRobustnessTest {
         assertIs<GateResult.Success<GateResponse>>(transaction.decode(PuloonFrame(42, 0, "S00".encodeToByteArray())))
 
         val failure = assertIs<GateResult.Failure>(transaction.decode(PuloonFrame(42, 0, "S03".encodeToByteArray())))
-        assertEquals(GateError.Device("03", "Controller busy"), failure.error)
+        assertEquals(GateError.Device("03", "Sensor 03 failure"), failure.error)
     }
 
     @Test

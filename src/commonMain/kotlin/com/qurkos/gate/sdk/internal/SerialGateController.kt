@@ -38,6 +38,7 @@ import kotlin.time.TimeSource
  * It performs capability checks, serializes operation creation, maps response variants, and owns normalized status/event
  * state. Vendor semantics are delegated to [GateProtocolAdapter], while I/O lifecycle is delegated to [SerialSession].
  */
+@Suppress("TooManyFunctions") // The Gate contract is intentionally implemented in one serialized controller.
 internal class SerialGateController(
     config: GateDeviceConfig,
     private val adapter: GateProtocolAdapter,
@@ -45,36 +46,44 @@ internal class SerialGateController(
     dispatcher: CoroutineDispatcher,
 ) : Gate {
     private val mutableStatus = MutableStateFlow<GateStatus?>(null)
+    private val mutableConnectionState = MutableStateFlow(GateConnectionState.DISCONNECTED)
     private val mutableEvents = MutableSharedFlow<GateEvent>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
     private val operationMutex = Mutex()
     private var traceSequence = 0L
+    private var normalOpenMode = config.hardware.normalOpen
     private val session =
         SerialSession(
             serialConfig = config.serial,
             runtime = config.runtime,
             adapter = adapter,
             transport = transport,
-            eventSink = mutableEvents::tryEmit,
+            eventSink = ::onSessionEvent,
             dispatcher = dispatcher,
         )
 
     override val descriptor = adapter.descriptor
     override val capabilities: Set<GateCapability> = adapter.capabilities
-    override val connectionState: StateFlow<GateConnectionState> = session.connectionState
+    override val connectionState: StateFlow<GateConnectionState> = mutableConnectionState.asStateFlow()
     override val status: StateFlow<GateStatus?> = mutableStatus.asStateFlow()
     override val events: Flow<GateEvent> = mutableEvents.asSharedFlow()
 
     /** Connects the shared session and starts optional monitoring exactly once. */
     override suspend fun connect(): GateResult<Unit> {
-        val result =
+        val opened =
             trace(
                 command = GateCommand.CONNECT,
                 requestDetail = "Open serial session",
                 successDetail = { "Serial session connected" },
                 block = session::connect,
             )
+        if (opened is GateResult.Failure) return opened
+        val verified = refreshStatus()
+        if (verified is GateResult.Failure) {
+            session.disconnect()
+            return verified
+        }
         session.startMonitoring { refreshStatus() }
-        return result
+        return GateResult.Success(Unit)
     }
 
     /** Disconnects the session and invalidates the last status snapshot. */
@@ -125,6 +134,7 @@ internal class SerialGateController(
             }
         if (result is GateResult.Success) {
             mutableStatus.value = result.value
+            publishConnection(GateConnectionState.CONNECTED)
             mutableEvents.tryEmit(GateEvent.StatusChanged(result.value))
         }
         return result
@@ -132,7 +142,7 @@ internal class SerialGateController(
 
     /** Delegates a passage-mode write after capability validation. */
     override suspend fun setPassMode(mode: GatePassMode): GateResult<Unit> =
-        acknowledge(GateOperation.SetPassMode(mode), GateCapability.PASS_MODE)
+        acknowledge(GateOperation.SetPassMode(mode, normalOpenMode), GateCapability.PASS_MODE)
 
     /** Delegates a safety-region write; adapter validation supplies mechanism-specific limits. */
     override suspend fun setSafetyRegion(region: GateSafetyRegion): GateResult<Unit> =
@@ -182,14 +192,22 @@ internal class SerialGateController(
         acknowledge(GateOperation.SetDoorTiming(timing), GateCapability.DOOR_TIMING)
 
     /** Executes a complete typed settings-block read. */
-    override suspend fun readSettings(): GateResult<Set<GateSetting>> =
-        execute(GateOperation.ReadSettings, GateCapability.SETTINGS).mapExpected { response ->
-            (response as? GateResponse.Settings)?.value
-        }
+    override suspend fun readSettings(): GateResult<Set<GateSetting>> {
+        val result =
+            execute(GateOperation.ReadSettings, GateCapability.SETTINGS).mapExpected { response ->
+                (response as? GateResponse.Settings)?.value
+            }
+        if (result is GateResult.Success) updateNormalOpen(result.value)
+        return result
+    }
 
     /** Delegates validation and a non-retryable complete settings-block write. */
-    override suspend fun applySettings(settings: Set<GateSetting>): GateResult<Unit> =
-        acknowledge(GateOperation.ApplySettings(settings.toSet()), GateCapability.SETTINGS)
+    override suspend fun applySettings(settings: Set<GateSetting>): GateResult<Unit> {
+        val stableSettings = settings.toSet()
+        val result = acknowledge(GateOperation.ApplySettings(stableSettings), GateCapability.SETTINGS)
+        if (result is GateResult.Success) updateNormalOpen(stableSettings)
+        return result
+    }
 
     /** Delegates an explicitly enabled, non-retryable maintenance diagnostic. */
     override suspend fun runDiagnostic(diagnostic: GateDiagnostic): GateResult<Unit> =
@@ -346,10 +364,18 @@ internal class SerialGateController(
 
     private fun GateDiagnostic.traceName(): String =
         when (this) {
-            is GateDiagnostic.Door -> "door actuator"
-            is GateDiagnostic.Lamp -> "direction lamp"
-            GateDiagnostic.Buzzer -> "warning buzzer"
+            is GateDiagnostic.Door -> "door ${action.name.lowercase()}"
+            is GateDiagnostic.EndDisplay -> "${color.name.lowercase()} end display ${enabled.onOff()}"
+            is GateDiagnostic.Indicator -> "${color.name.lowercase()} indicator ${enabled.onOff()}"
+            is GateDiagnostic.Buzzer -> "buzzer $index ${enabled.onOff()}"
+            is GateDiagnostic.ReturnCupLamp -> "return-cup lamp ${enabled.onOff()}"
         }
+
+    private fun Boolean.onOff(): String = if (this) "on" else "off"
+
+    private fun updateNormalOpen(settings: Set<GateSetting>) {
+        settings.filterIsInstance<GateSetting.NormalOpenMode>().singleOrNull()?.let { normalOpenMode = it.enabled }
+    }
 
     private fun GateError.traceDetail(): String =
         when (this) {
@@ -367,6 +393,21 @@ internal class SerialGateController(
         lowercase()
             .split('_')
             .joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
+
+    /** Keeps transport-open state private until a valid controller status has completed the handshake. */
+    private fun onSessionEvent(event: GateEvent) {
+        if (event is GateEvent.ConnectionChanged) {
+            if (event.state != GateConnectionState.CONNECTED) publishConnection(event.state)
+        } else {
+            mutableEvents.tryEmit(event)
+        }
+    }
+
+    private fun publishConnection(state: GateConnectionState) {
+        if (mutableConnectionState.value == state) return
+        mutableConnectionState.value = state
+        mutableEvents.tryEmit(GateEvent.ConnectionChanged(state))
+    }
 
     private companion object {
         const val EVENT_BUFFER_CAPACITY = 64

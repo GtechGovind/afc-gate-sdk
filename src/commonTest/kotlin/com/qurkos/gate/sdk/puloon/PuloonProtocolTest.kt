@@ -79,14 +79,14 @@ class PuloonProtocolTest {
         assertEquals(clock, PuloonPayloadCodec.decodeClock(PuloonPayloadCodec.encodeClock(clock)))
         val settings =
             setOf(
-                GateSetting.SensorSensitivity(15),
+                GateSetting.NoEntryTimeout(100.seconds),
                 GateSetting.NormalOpenMode(false),
                 GateSetting.HurryUpLevel(2),
                 GateSetting.TagTimeoutFromLastTag(true),
                 GateSetting.TailingSensitivity(1),
-                GateSetting.PassageTimeout(100.seconds),
-                GateSetting.ChildHeight(null),
-                GateSetting.ChildDetection(false),
+                GateSetting.BuzzerTimeoutUnits(15),
+                GateSetting.SafetyRegionTimeout(100.seconds),
+                GateSetting.ChildDetection(0),
             )
         assertEquals(settings, PuloonSettingsCodec.decode(PuloonSettingsCodec.encode(settings)))
     }
@@ -117,7 +117,7 @@ class PuloonProtocolTest {
             PuloonPayloadCodec.decodeClock("28-02-29123456".encodeToByteArray())
         }
         assertFailsWith<IllegalArgumentException> {
-            PuloonSettingsCodec.decode("0F0X110A@@0".encodeToByteArray())
+            PuloonSettingsCodec.decode("1001X110F640".encodeToByteArray())
         }
     }
 
@@ -126,8 +126,8 @@ class PuloonProtocolTest {
         val settings =
             completeSettings() +
                 setOf(
-                    GateSetting.SensorSensitivity(1),
-                    GateSetting.SensorSensitivity(2),
+                    GateSetting.BuzzerTimeoutUnits(1),
+                    GateSetting.BuzzerTimeoutUnits(2),
                 )
 
         assertFailsWith<IllegalArgumentException> { PuloonSettingsCodec.encode(settings) }
@@ -135,13 +135,13 @@ class PuloonProtocolTest {
 
     private fun completeSettings(): Set<GateSetting> =
         setOf(
-            GateSetting.SensorSensitivity(15),
+            GateSetting.NoEntryTimeout(100.seconds),
             GateSetting.NormalOpenMode(false),
             GateSetting.HurryUpLevel(2),
             GateSetting.TagTimeoutFromLastTag(true),
             GateSetting.TailingSensitivity(1),
-            GateSetting.PassageTimeout(100.seconds),
-            GateSetting.ChildHeight(null),
-            GateSetting.ChildDetection(false),
+            GateSetting.BuzzerTimeoutUnits(15),
+            GateSetting.SafetyRegionTimeout(100.seconds),
+            GateSetting.ChildDetection(0),
         )
 }

@@ -2,8 +2,10 @@ package com.qurkos.gate.sdk.puloon
 
 import com.qurkos.gate.sdk.GateDiagnostic
 import com.qurkos.gate.sdk.GateDirection
+import com.qurkos.gate.sdk.GateDoorTestAction
 import com.qurkos.gate.sdk.GateDoorTiming
 import com.qurkos.gate.sdk.GateHardwareProfile
+import com.qurkos.gate.sdk.GateLampColor
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
@@ -26,8 +28,6 @@ import kotlin.time.Duration.Companion.seconds
 class PuloonAdapterValidationTest {
     @Test
     fun mechanismSpecificSafetyRegionBoundsAreEnforced() {
-        assertSuccess(adapter(GateMechanism.FLAP).transaction(GateOperation.SetSafetyRegion(GateSafetyRegion(3))))
-        assertFailure(adapter(GateMechanism.FLAP).transaction(GateOperation.SetSafetyRegion(GateSafetyRegion(4))))
         assertSuccess(adapter(GateMechanism.SWING).transaction(GateOperation.SetSafetyRegion(GateSafetyRegion(3))))
         assertFailure(adapter(GateMechanism.SWING).transaction(GateOperation.SetSafetyRegion(GateSafetyRegion(4))))
         assertSuccess(adapter(GateMechanism.SECTOR).transaction(GateOperation.SetSafetyRegion(GateSafetyRegion(6))))
@@ -36,7 +36,7 @@ class PuloonAdapterValidationTest {
 
     @Test
     fun timingUpsAndStandbyBoundariesAreEnforced() {
-        val adapter = adapter(GateMechanism.FLAP)
+        val adapter = adapter(GateMechanism.SECTOR)
         assertSuccess(adapter.transaction(GateOperation.SetUpsShutdownDelay(0)))
         assertSuccess(adapter.transaction(GateOperation.SetUpsShutdownDelay(2_550)))
         assertFailure(adapter.transaction(GateOperation.SetUpsShutdownDelay(11)))
@@ -61,10 +61,17 @@ class PuloonAdapterValidationTest {
 
     @Test
     fun diagnosticBoundsAndMaintenanceCapabilityAreConsistent() {
-        val enabled = adapter(GateMechanism.FLAP, maintenance = true)
-        val disabled = adapter(GateMechanism.FLAP, maintenance = false)
-        assertSuccess(enabled.transaction(GateOperation.Diagnostic(GateDiagnostic.Lamp(9, true))))
-        assertFailure(enabled.transaction(GateOperation.Diagnostic(GateDiagnostic.Lamp(10, true))))
+        val enabled = adapter(GateMechanism.SECTOR, maintenance = true)
+        val disabled = adapter(GateMechanism.SECTOR, maintenance = false)
+        val diagnostics =
+            listOf(
+                GateDiagnostic.Door(GateDoorTestAction.OPEN),
+                GateDiagnostic.EndDisplay(GateLampColor.YELLOW, true),
+                GateDiagnostic.Indicator(GateLampColor.BLUE, false),
+                GateDiagnostic.Buzzer(3, true),
+                GateDiagnostic.ReturnCupLamp(false),
+            )
+        assertTrue(diagnostics.all { enabled.transaction(GateOperation.Diagnostic(it)) is GateResult.Success })
         assertTrue(
             enabled.capabilities.containsAll(
                 setOf(com.qurkos.gate.sdk.GateCapability.DIAGNOSTICS, com.qurkos.gate.sdk.GateCapability.RESET),
@@ -75,11 +82,14 @@ class PuloonAdapterValidationTest {
 
     @Test
     fun everyPassModeHasAStableDocumentedWireNibble() {
-        val adapter = adapter(GateMechanism.FLAP)
-
         val wireModes =
             GatePassMode.entries.map { mode ->
-                val transaction = assertSuccess(adapter.transaction(GateOperation.SetPassMode(mode)))
+                val closed = adapter(GateMechanism.SECTOR, maintenance = true, normalOpen = false)
+                val opened = adapter(GateMechanism.SECTOR, maintenance = true, normalOpen = true)
+                val normalOpen = mode !in closed.support.passModes
+                val selected = if (normalOpen) opened else closed
+                assertTrue(mode in selected.support.passModes)
+                val transaction = assertSuccess(selected.transaction(GateOperation.SetPassMode(mode, normalOpen)))
                 PuloonFrameCodec
                     .decode(transaction.encode(0))
                     .payload[1]
@@ -92,7 +102,7 @@ class PuloonAdapterValidationTest {
 
     @Test
     fun sequenceWrapsOnlyAfterFullUnsignedRange() {
-        val adapter = adapter(GateMechanism.FLAP)
+        val adapter = adapter(GateMechanism.SECTOR)
         var firstSequence = -1
         var wrappedSequence = -1
         repeat(0x1_0001) { index ->
@@ -111,12 +121,14 @@ class PuloonAdapterValidationTest {
     private fun adapter(
         mechanism: GateMechanism,
         maintenance: Boolean = false,
+        normalOpen: Boolean = false,
     ): PuloonAdapter =
         PuloonAdapter(
             GateHardwareProfile(
                 mechanism = mechanism,
                 site = GateSite.KOLKATA_INDIA,
-                modules = setOf(GateModule.UPS),
+                modules = setOf(GateModule.UPS, GateModule.TOKEN_CONTROL_UNIT),
+                normalOpen = normalOpen,
             ),
             maintenanceOperationsEnabled = maintenance,
         )

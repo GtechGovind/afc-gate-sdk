@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
@@ -36,6 +38,7 @@ import com.qurkos.gate.controlpanel.ui.model.ControlPanelUiState
 import com.qurkos.gate.controlpanel.ui.model.GateEventUi
 import com.qurkos.gate.controlpanel.ui.model.GateTrafficUi
 import com.qurkos.gate.controlpanel.ui.model.TrafficDirection
+import com.qurkos.gate.sdk.GateCapability
 
 /** Primary physical-gate screen for authorization, rejection, emergency, and confirmed motion. */
 @Composable
@@ -65,6 +68,7 @@ internal fun LiveControlScreen(
 }
 
 @Composable
+@Suppress("LongMethod", "CyclomaticComplexMethod") // Capability branches deliberately colocate all passage controls.
 private fun CommandPanel(
     state: ControlPanelUiState,
     callbacks: ControlPanelCallbacks,
@@ -74,7 +78,7 @@ private fun CommandPanel(
         state.connectionHealth == com.qurkos.gate.controlpanel.ui.model.ConnectionHealth.CONNECTED &&
             !state.commandInProgress
     Column(
-        modifier = modifier.padding(20.dp),
+        modifier = modifier.verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (state.connectionHealth != ConnectionHealth.CONNECTED) {
@@ -84,52 +88,95 @@ private fun CommandPanel(
             TelemetryCard("Passage mode", state.passageMode, Modifier.weight(1f))
             TelemetryCard("Passengers", state.passengerCount?.toString() ?: "—", Modifier.weight(1f))
         }
+        TelemetryCard("Controller status", state.controllerStatusDetail, Modifier.fillMaxWidth())
+        if (GateCapability.UPS_SHUTDOWN in state.supportedCapabilities) {
+            TelemetryCard("Power / UPS", state.powerStatusDetail, Modifier.fillMaxWidth())
+        }
+        if (state.configuration.tokenControlUnitInstalled) {
+            TelemetryCard("Token control unit", state.tokenStatusDetail, Modifier.fillMaxWidth())
+        }
         Text("Passage controls", style = MaterialTheme.typography.titleMedium)
-        Button(
-            onClick = callbacks::onAllowEntry,
-            enabled = hardwareReady && !state.gateTwin.emergencyActive,
-            modifier = Modifier.fillMaxWidth(),
-            colors =
-                ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-        ) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowForward, null)
-            Text("Allow Entry", Modifier.padding(vertical = 9.dp))
+        if (GateCapability.MULTI_PERSON_PASSAGE in state.supportedCapabilities) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Passenger count", style = MaterialTheme.typography.bodyMedium)
+                Row {
+                    TextButton(
+                        onClick = { callbacks.onPassagePassengerCountChanged(state.passagePassengerCount - 1) },
+                        enabled = state.passagePassengerCount > 1,
+                    ) { Text("−") }
+                    Text(state.passagePassengerCount.toString(), Modifier.padding(horizontal = 8.dp, vertical = 12.dp))
+                    TextButton(
+                        onClick = { callbacks.onPassagePassengerCountChanged(state.passagePassengerCount + 1) },
+                        enabled = state.passagePassengerCount < 99,
+                    ) { Text("+") }
+                }
+            }
         }
-        OutlinedButton(
-            onClick = callbacks::onAllowExit,
-            enabled = hardwareReady && !state.gateTwin.emergencyActive,
-            modifier = Modifier.fillMaxWidth(),
-            colors =
-                ButtonDefaults.outlinedButtonColors(
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-        ) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
-            Text("Allow Exit", Modifier.padding(vertical = 9.dp))
+        if (GateCapability.PASSAGE_LAMP in state.supportedCapabilities) {
+            OptionDropdown(
+                "Passage indicator",
+                state.passageLampColor,
+                callbacks::onPassageLampColorChanged,
+                listOf(
+                    "GREEN",
+                    "BLUE",
+                    "RED",
+                    "YELLOW",
+                    "OFF",
+                ).map { SelectionOption(it, it.lowercase().replaceFirstChar(Char::uppercase)) },
+            )
         }
-        OutlinedButton(
-            onClick = callbacks::onReject,
-            enabled = hardwareReady && !state.gateTwin.emergencyActive,
-            modifier = Modifier.fillMaxWidth(),
-            colors =
-                ButtonDefaults.outlinedButtonColors(
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-        ) {
-            Icon(Icons.Outlined.Block, null)
-            Text("Reject Passage", Modifier.padding(vertical = 9.dp))
+        if (GateCapability.PASSAGE in state.supportedCapabilities) {
+            Button(
+                onClick = callbacks::onAllowEntry,
+                enabled = hardwareReady && !state.gateTwin.emergencyActive,
+                modifier = Modifier.fillMaxWidth(),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null)
+                Text("Allow Entry", Modifier.padding(vertical = 9.dp))
+            }
+            OutlinedButton(
+                onClick = callbacks::onAllowExit,
+                enabled = hardwareReady && !state.gateTwin.emergencyActive,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
+                Text("Allow Exit", Modifier.padding(vertical = 9.dp))
+            }
         }
-        HorizontalDivider(Modifier.padding(vertical = 2.dp))
-        SafetyHoldButton(
-            label = if (state.gateTwin.emergencyActive) "RESET EMERGENCY" else "EMERGENCY STOP",
-            holdProgress = state.safetyHoldProgress,
-            enabled = hardwareReady,
-            onHoldCompleted = if (state.gateTwin.emergencyActive) callbacks::onEmergencyReset else callbacks::onEmergencyStop,
-        )
+        if (GateCapability.INVALID_TICKET in state.supportedCapabilities) {
+            OptionDropdown(
+                "Reject direction",
+                state.rejectDirection,
+                callbacks::onRejectDirectionChanged,
+                listOf(SelectionOption("ENTRY", "Entry"), SelectionOption("EXIT", "Exit")),
+            )
+            OutlinedButton(
+                onClick = callbacks::onReject,
+                enabled = hardwareReady && !state.gateTwin.emergencyActive,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+            ) {
+                Icon(Icons.Outlined.Block, null)
+                Text("Reject Passage", Modifier.padding(vertical = 9.dp))
+            }
+        }
+        if (GateCapability.EMERGENCY in state.supportedCapabilities) {
+            HorizontalDivider(Modifier.padding(vertical = 2.dp))
+            SafetyHoldButton(
+                label = if (state.gateTwin.emergencyActive) "CLEAR EMERGENCY RELEASE" else "EMERGENCY RELEASE",
+                holdProgress = state.safetyHoldProgress,
+                enabled = hardwareReady,
+                onHoldCompleted = if (state.gateTwin.emergencyActive) callbacks::onEmergencyReset else callbacks::onEmergencyStop,
+            )
+        }
     }
 }
 

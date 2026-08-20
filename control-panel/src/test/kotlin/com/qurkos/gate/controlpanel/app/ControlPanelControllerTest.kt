@@ -83,9 +83,19 @@ class ControlPanelControllerTest {
             assertEquals("Test GCU", state.controllerName)
             assertEquals("9.9.9", state.firmware)
             assertEquals(12, state.passengerCount)
-            assertEquals(16, state.gateTwin.sensors.size)
-            assertEquals(SensorHealth.ACTIVE, state.gateTwin.sensors[1].health)
-            assertEquals(SensorHealth.ACTIVE, state.gateTwin.sensors[14].health)
+            assertEquals(18, state.gateTwin.sensors.size)
+            assertEquals(
+                SensorHealth.ACTIVE,
+                state.gateTwin.sensors
+                    .first { it.id == 2 }
+                    .health,
+            )
+            assertEquals(
+                SensorHealth.ACTIVE,
+                state.gateTwin.sensors
+                    .first { it.id == 15 }
+                    .health,
+            )
             assertTrue(fake.statusReads > 0)
             controller.close()
         }
@@ -163,9 +173,10 @@ class ControlPanelControllerTest {
             controller.onConnect()
             advanceUntilIdle()
 
+            val readsBeforeDiagnostic = fake.sensorReads
             controller.onDiagnosticRun("sensor-bank")
             advanceUntilIdle()
-            assertEquals(1, fake.sensorReads)
+            assertEquals(readsBeforeDiagnostic + 1, fake.sensorReads)
             assertEquals(
                 DiagnosticState.PASSED,
                 controller.state.value.diagnostics
@@ -173,10 +184,14 @@ class ControlPanelControllerTest {
                     .state,
             )
 
-            controller.onDiagnosticRun("buzzer")
+            controller.onDiagnosticRun("buzzer-1-on")
             assertTrue(fake.diagnostics.isEmpty())
+            controller.onDisconnect()
+            advanceUntilIdle()
             controller.onConfigurationChanged(GateConfigurationUi(maintenanceOperationsEnabled = true))
-            controller.onDiagnosticRun("buzzer")
+            controller.onConnect()
+            advanceUntilIdle()
+            controller.onDiagnosticRun("buzzer-1-on")
             advanceUntilIdle()
             assertEquals(1, fake.diagnostics.size)
             controller.close()
@@ -196,8 +211,8 @@ class ControlPanelControllerTest {
 
             assertEquals(1, fake.passModes.size)
             assertEquals(1, fake.safetyRegions.size)
-            assertEquals(listOf(30), fake.upsDelays)
-            assertEquals(1, fake.standbyWrites.size)
+            assertTrue(fake.upsDelays.isEmpty())
+            assertTrue(fake.standbyWrites.isEmpty())
             assertEquals(1, fake.timingWrites.size)
             assertEquals(8, fake.settingWrites.single().size)
             assertFalse(controller.state.value.configuration.hasUnsavedChanges)
@@ -209,9 +224,16 @@ class ControlPanelControllerTest {
         runTest {
             val fake = FakeGate()
             val controller = controller(fake)
+            controller.onConfigurationChanged(
+                GateConfigurationUi(
+                    site = "KOLKATA_INDIA",
+                    upsInstalled = true,
+                    tokenControlUnitInstalled = true,
+                    maintenanceOperationsEnabled = true,
+                ),
+            )
             controller.onConnect()
             advanceUntilIdle()
-            controller.onConfigurationChanged(GateConfigurationUi(maintenanceOperationsEnabled = true))
 
             controller.onDiagnosticRunAll()
             advanceUntilIdle()
@@ -228,15 +250,13 @@ class ControlPanelControllerTest {
         }
 
     @Test
-    fun sensorInventoryContainsEightOrderedLeftRightPairs() {
+    fun sensorInventoryMatchesDocumentedSectorInputs() {
         val sensors = defaultGateSensors()
 
-        assertEquals(16, sensors.size)
-        sensors.chunked(2).forEach { pair ->
-            assertTrue(pair[0].code.endsWith("-L"))
-            assertTrue(pair[1].code.endsWith("-R"))
-        }
-        assertEquals((1..16).toList(), sensors.map { it.id })
+        assertEquals(18, sensors.size)
+        assertEquals((1..19).filter { it != 10 }, sensors.map { it.id })
+        assertEquals("S01", sensors.first().code)
+        assertEquals("S19", sensors.last().code)
     }
 
     @Test
@@ -250,10 +270,9 @@ class ControlPanelControllerTest {
             fake.publishStatus(FakeGate.sampleStatus(setOf(GateSensorId(4)), sensorFault = true))
             advanceUntilIdle()
 
-            assertTrue(
-                controller.state.value.gateTwin.sensors
-                    .all { it.health == SensorHealth.FAULT },
-            )
+            val sensors = controller.state.value.gateTwin.sensors
+            assertEquals(SensorHealth.FAULT, sensors.first { it.id == 4 }.health)
+            assertTrue(sensors.filterNot { it.id == 4 }.none { it.health == SensorHealth.FAULT })
             controller.close()
         }
 

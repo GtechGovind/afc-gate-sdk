@@ -253,13 +253,38 @@ internal class PuloonTransaction(
         }
 
     /** Returns the specification description for a known two-character GCU error code. */
+    @Suppress("CyclomaticComplexMethod") // Exhaustive protocol-code table mirrors the vendor specification.
     private fun deviceErrorMessage(code: String): String? =
-        when (code) {
-            "01" -> "Invalid command"
-            "02" -> "Invalid parameter"
-            "03" -> "Controller busy"
-            "04" -> "Hardware error"
-            else -> null
+        code.toIntOrNull()?.let { numeric ->
+            when (numeric) {
+                in 1..24 -> "Sensor ${numeric.toString().padStart(2, '0')} failure"
+                39 -> "Wrong-way fraud entry"
+                40 -> "Wrong-way fraud exit"
+                41 -> "Intrusion entry"
+                42 -> "Intrusion exit"
+                43 -> "Piggy tailing entry"
+                44 -> "Piggy tailing exit"
+                50 -> "Exit timeout entry side"
+                51 -> "Exit timeout exit side"
+                52 -> "Door 1 open failure"
+                53 -> "Door 1 close failure"
+                54 -> "Door 2 open failure"
+                55 -> "Door 2 close failure"
+                56 -> "Command CRC error"
+                60 -> "Tag buffer full"
+                61 -> "Door 1 forced open"
+                62 -> "Door 2 forced open"
+                63 -> "Door 1 over current"
+                64 -> "Door 2 over current"
+                65 -> "Door 1 over heating"
+                66 -> "Door 2 over heating"
+                67 -> "Door 1 following error"
+                68 -> "Door 2 following error"
+                69 -> "Door 1 communication error"
+                70 -> "Door 2 communication error"
+                71 -> "UPS communication error"
+                else -> null
+            }
         }
 
     private companion object {

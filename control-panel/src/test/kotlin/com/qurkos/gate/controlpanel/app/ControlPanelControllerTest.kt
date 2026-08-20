@@ -260,6 +260,26 @@ class ControlPanelControllerTest {
     }
 
     @Test
+    fun exposesAndOpensThePersistentLogDirectory() =
+        runTest {
+            var opened = false
+            val controller =
+                ControlPanelController(
+                    dispatcher = StandardTestDispatcher(testScheduler),
+                    gateFactory = { GateResult.Success(FakeGate()) },
+                    serialPortProvider = { GateResult.Success(emptyList()) },
+                    logDirectoryProvider = { "test-log-directory" },
+                    logDirectoryOpener = { opened = true },
+                )
+
+            assertEquals("test-log-directory", controller.state.value.logDirectory)
+            controller.onOpenLogDirectory()
+            assertTrue(opened)
+            assertEquals("Opened persistent log folder", controller.state.value.transientMessage)
+            controller.close()
+        }
+
+    @Test
     fun statusFaultMarksEverySensorFaulted() =
         runTest {
             val fake = FakeGate()

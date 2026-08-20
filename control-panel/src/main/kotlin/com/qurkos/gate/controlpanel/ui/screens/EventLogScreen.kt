@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
@@ -20,6 +21,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,6 +50,10 @@ internal fun EventLogScreen(
         }
     Column(modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         PageTitle("Event Log", "Search and export controller, passenger, sensor, and safety events") {
+            OutlinedButton(onClick = callbacks::onOpenLogDirectory) {
+                Icon(Icons.Outlined.FolderOpen, null)
+                Text("Open log folder", Modifier.padding(start = 8.dp))
+            }
             Button(onClick = callbacks::onEventLogExport) {
                 Icon(Icons.Outlined.Download, null)
                 Text("Export", Modifier.padding(start = 8.dp))
@@ -82,6 +88,11 @@ internal fun EventLogScreen(
                 }
             }
         }
+        Text(
+            text = "Persistent rotating logs: ${state.logDirectory.ifBlank { "Unavailable" }}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         PanelCard(Modifier.weight(1f).fillMaxWidth()) {
             Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
                 EventTableHeader()

@@ -54,12 +54,51 @@ compose.desktop {
             packageVersion = project.version.toString().substringBefore('-')
             description = "Desktop control panel for physical AFC gate controllers"
             vendor = "Qurkos"
+            copyright = "Copyright © 2026 Qurkos"
+            licenseFile.set(rootProject.layout.projectDirectory.file("LICENSE"))
+
+            windows {
+                iconFile.set(project.layout.projectDirectory.file("src/main/packaging/icons/app-icon.ico"))
+                menu = true
+                menuGroup = "Qurkos"
+                shortcut = true
+                dirChooser = true
+                perUserInstall = false
+                // This must remain stable so MSI upgrades replace earlier installations.
+                upgradeUuid = "5754EEE4-5D17-4223-8766-626E11E7AC02"
+            }
+
+            linux {
+                iconFile.set(project.layout.projectDirectory.file("src/main/packaging/icons/app-icon.png"))
+                packageName = "afc-gate-control-panel"
+                shortcut = true
+                menuGroup = "Utility"
+                appCategory = "Utility"
+                appRelease = "1"
+                debMaintainer = "Qurkos <support@qurkos.com>"
+            }
+
+            macOS {
+                iconFile.set(project.layout.projectDirectory.file("src/main/packaging/icons/app-icon.icns"))
+                packageName = "AFC Gate Control Panel"
+                bundleID = "com.qurkos.afc.gate-control-panel"
+                dockName = "AFC Gate Control Panel"
+                appCategory = "public.app-category.utilities"
+                minimumSystemVersion = "12.0"
+            }
         }
     }
 }
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty(
+        "afc.gate.log.dir",
+        layout.buildDirectory
+            .dir("test-logs")
+            .get()
+            .asFile.absolutePath,
+    )
 }
 
 ktlint {

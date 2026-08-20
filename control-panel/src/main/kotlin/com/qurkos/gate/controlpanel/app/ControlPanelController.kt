@@ -85,10 +85,16 @@ class ControlPanelController(
     private val serialPortProvider: () -> GateResult<List<SerialPortInfo>> = GateSdk::serialPorts,
     private val eventLogExporter: (List<GateEventUi>) -> String? = ::exportEventLog,
     private val supportProvider: (GateDeviceConfig) -> GateResult<GateSupport> = GateSdk::support,
+    private val logDirectoryProvider: () -> String = { ApplicationLogging.directory.toString() },
+    private val logDirectoryOpener: () -> Unit = ApplicationLogging::openDirectory,
 ) : ControlPanelCallbacks,
     AutoCloseable {
+    private val logger = ApplicationLogging.logger(ControlPanelController::class.java)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-    private val mutableState = MutableStateFlow(ControlPanelUiState())
+    private val mutableState =
+        MutableStateFlow(
+            ControlPanelUiState(logDirectory = runCatching(logDirectoryProvider).getOrDefault("Unavailable")),
+        )
     private var hardwareGate: Gate? = null
     private var hardwareObservers: Job? = null
     private var motionJob: Job? = null
@@ -361,12 +367,21 @@ class ControlPanelController(
             }
     }
 
+    override fun onOpenLogDirectory() {
+        runCatching(logDirectoryOpener)
+            .onSuccess { showMessage("Opened persistent log folder") }
+            .onFailure { error ->
+                showMessage("Unable to open log folder: ${error.message ?: "unknown desktop error"}")
+            }
+    }
+
     override fun onClearTraffic() {
         mutableState.update { it.copy(traffic = emptyList()) }
     }
 
     /** Disconnects the serial session and cancels all work owned by this window. */
     override fun close() {
+        logger.info("Control-panel controller closing")
         val gate = hardwareGate
         hardwareGate = null
         hardwareObservers?.cancel()
@@ -768,6 +783,7 @@ class ControlPanelController(
                 launch {
                     gate.events.collectLatest { sdkEvent ->
                         val traffic = sdkEvent.toTrafficUi() ?: return@collectLatest
+                        runCatching { logger.traffic(traffic) }
                         mutableState.update { it.appendTraffic(traffic) }
                     }
                 }
@@ -840,7 +856,7 @@ class ControlPanelController(
             detail = detail,
             severity = severity,
             category = category,
-        )
+        ).also { item -> runCatching { logger.event(item) } }
     }
 
     private companion object {

@@ -71,6 +71,52 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  package-smoke:
+    name: Package control panel (${{ matrix.format }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            task: packageDmg
+            format: dmg
+          - os: windows-latest
+            task: packageMsi
+            format: msi
+          - os: ubuntu-latest
+            task: packageDeb
+            format: deb
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Test and build native installer
+        shell: bash
+        run: ./gradlew --no-daemon :control-panel:test :control-panel:${{ matrix.task }}
+
+      - name: Verify installer output
+        shell: pwsh
+        run: |
+          $packages = Get-ChildItem "control-panel/build/compose/binaries/main/${{ matrix.format }}" -File
+          if ($packages.Count -ne 1) {
+            throw "Expected exactly one ${{ matrix.format }} installer, found $($packages.Count)."
+          }
+          if ($packages[0].Length -le 0) {
+            throw "The generated ${{ matrix.format }} installer is empty."
+          }
+
   dependency-graph:
     name: Submit dependency graph
     if: github.event_name == 'push'

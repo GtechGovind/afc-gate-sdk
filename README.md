@@ -76,7 +76,7 @@ repositories {
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.qurkos.afc:afc-gate-sdk:1.0.1")
+            implementation("com.qurkos.afc:afc-gate-sdk:1.0.2")
         }
     }
 }
@@ -216,10 +216,16 @@ showing correlated TX/RX operations, response latency, and failures from the
 physical SDK session. Background status polling and configuration operations
 appear in the same feed as operator commands.
 
-Tagged releases include `afc-gate-control-panel-VERSION.jar` for file-based
+Tagged releases include native DMG, MSI, and DEB installers plus
+`afc-gate-control-panel-VERSION.jar` for file-based
 dependency use. The UI JAR is deliberately not published to Maven; see
 [Control Panel](docs/CONTROL_PANEL.md#use-as-a-compiled-jar) for its required
 runtime dependencies.
+
+The installers provide native application-menu integration and branded icons.
+Windows also installs Start-menu and desktop shortcuts. Persistent rotating
+logs can be opened from the Event Log screen and are stored in the standard
+per-user log/state directory for each operating system.
 
 Five operational screens are included:
 

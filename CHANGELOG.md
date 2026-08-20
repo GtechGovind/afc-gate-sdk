@@ -2,6 +2,16 @@
 
 All notable changes are recorded here. The project follows semantic versioning.
 
+## 1.0.2 - 2026-08-20
+
+- Added Windows Start-menu and desktop shortcuts, a stable MSI upgrade identity, and configurable machine-wide
+  installation.
+- Added a Linux desktop/application-menu shortcut and complete Debian application metadata.
+- Added a stable macOS bundle identity, utilities category, minimum OS version, Dock name, and native application icon.
+- Added branded Windows, Linux, and macOS package icons generated from one maintained vector source.
+- Added persistent UTF-8 operational and semantic traffic logs with 5 MiB rotation, seven-file retention, standard
+  per-platform storage locations, uncaught-exception capture, and an in-app Open log folder action.
+
 ## 1.0.1 - 2026-08-20
 
 - Aligned Puloon GCU commands, settings, status decoding, diagnostics, errors, and sensor handling with interface

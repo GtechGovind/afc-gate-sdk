@@ -24,6 +24,18 @@ be built on its matching host operating system. Tagged releases build all three
 installers in GitHub Actions and attach them together with the compiled
 `afc-gate-control-panel-VERSION.jar` and SDK artifacts.
 
+Installer integration is platform-native:
+
+| Platform | Installer behavior |
+|---|---|
+| Windows | Machine-wide MSI with directory chooser, Start-menu entry, desktop shortcut, branded icon, and stable upgrade identity |
+| Linux | Debian package with a Utilities application-menu shortcut, branded icon, maintainer metadata, and clean package removal |
+| macOS | DMG containing a branded `.app` with stable bundle ID, Applications/Launchpad integration, Dock name, and Utilities category |
+
+macOS intentionally does not create a desktop alias: installing the `.app` in
+`/Applications` makes it available through Finder, Spotlight, and Launchpad,
+which is the standard macOS application model.
+
 ## Use as a compiled JAR
 
 The control panel is intentionally not published to a Maven repository. Copy
@@ -32,14 +44,31 @@ a file dependency:
 
 ```kotlin
 dependencies {
-    implementation(files("libs/afc-gate-control-panel-1.0.1.jar"))
+    implementation(files("libs/afc-gate-control-panel-1.0.2.jar"))
 }
 ```
 
 The JAR contains the compiled control-panel classes and Compose resources. The
 consuming application remains responsible for its Compose Desktop runtime and
-the `com.qurkos.afc:afc-gate-sdk:1.0.1` dependency; file dependencies do not
+the `com.qurkos.afc:afc-gate-sdk:1.0.2` dependency; file dependencies do not
 carry Maven transitive metadata.
+
+## Persistent application logs
+
+The control panel writes operational events, safe semantic TX/RX traffic,
+lifecycle messages, and uncaught exceptions to rotating UTF-8 log files. Raw
+protocol bytes, credentials, and passenger identifiers are not logged. Each
+file is limited to 5 MiB and the latest seven files are retained.
+
+| Platform | Default log directory |
+|---|---|
+| Windows | `%LOCALAPPDATA%\\Qurkos\\AFC Gate Control Panel\\logs` |
+| Linux | `${XDG_STATE_HOME:-~/.local/state}/afc-gate-control-panel/logs` |
+| macOS | `~/Library/Logs/AFC Gate Control Panel` |
+
+Use **Event Log → Open log folder** to open the active location. Engineering
+and automated-test environments can override it with the JVM property
+`-Dafc.gate.log.dir=/path/to/logs`.
 
 ## Hardware operation
 

@@ -221,6 +221,7 @@ data class ControlPanelUiState(
     val passagePassengerCount: Int = 1,
     val passageLampColor: String = "GREEN",
     val rejectDirection: String = "ENTRY",
+    val logDirectory: String = "",
 ) {
     init {
         require(passengerCount == null || passengerCount >= 0) { "Passenger count cannot be negative" }
@@ -277,6 +278,8 @@ interface ControlPanelCallbacks {
 
     fun onEventLogExport()
 
+    fun onOpenLogDirectory()
+
     fun onClearTraffic()
 }
 
@@ -325,6 +328,8 @@ object NoOpControlPanelCallbacks : ControlPanelCallbacks {
     override fun onEventSeverityFilterChanged(severity: EventSeverity?) = Unit
 
     override fun onEventLogExport() = Unit
+
+    override fun onOpenLogDirectory() = Unit
 
     override fun onClearTraffic() = Unit
 }

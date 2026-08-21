@@ -325,8 +325,8 @@ internal class PuloonAdapter(
     /** Returns whether India-specific GCU commands and fields are available. */
     private fun GateHardwareProfile.isIndia(): Boolean = site == GateSite.INDIA || site == GateSite.KOLKATA_INDIA
 
-    /** Maps the common enum ordinal to the stable documented GCU mode character. */
-    private fun GatePassMode.wireValue(): Char = PASS_MODE_WIRE[ordinal]
+    /** Maps the common enum ordinal to the documented offset mode byte (`0x30..0x3F`). */
+    private fun GatePassMode.wireValue(): Char = (PASS_MODE_BASE + ordinal).toChar()
 
     /** Encodes one unsigned value as two uppercase hexadecimal ASCII characters. */
     private fun encodeAsciiHex(value: Int): ByteArray =
@@ -340,7 +340,7 @@ internal class PuloonAdapter(
         val VERSION_PATTERN = Regex("\\d{2}\\.\\d{2}")
         val STANDBY_SELECTOR = "2402".encodeToByteArray()
         val DOOR_TIMING_SELECTOR = "1102".encodeToByteArray()
-        const val PASS_MODE_WIRE = "0123456789ABCDEF"
+        const val PASS_MODE_BASE = 0x30
         const val MAX_SEQUENCE = 0xFFFF
         const val MAX_UNSIGNED_BYTE = 0xFF
         const val UPS_STEP_SECONDS = 10

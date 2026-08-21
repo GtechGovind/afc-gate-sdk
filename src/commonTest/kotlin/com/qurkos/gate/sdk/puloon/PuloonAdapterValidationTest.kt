@@ -52,6 +52,19 @@ class PuloonAdapterValidationTest {
                 GateOperation.SetStandbyPolicy(GateStandbyPolicy(255.seconds, GatePassMode.CONTROLLED_BOTH)),
             ),
         )
+        val outOfServiceStandby =
+            assertSuccess(
+                adapter.transaction(
+                    GateOperation.SetStandbyPolicy(GateStandbyPolicy(20.seconds, GatePassMode.OUT_OF_SERVICE)),
+                ),
+            )
+        val standbyModeByte =
+            PuloonFrameCodec
+                .decode(outOfServiceStandby.encode(0))
+                .payload
+                .last()
+                .toInt() and 0xFF
+        assertEquals(0x3F, standbyModeByte)
         assertFailure(
             adapter.transaction(
                 GateOperation.SetStandbyPolicy(GateStandbyPolicy(256.seconds, GatePassMode.CONTROLLED_BOTH)),
@@ -81,7 +94,7 @@ class PuloonAdapterValidationTest {
     }
 
     @Test
-    fun everyPassModeHasAStableDocumentedWireNibble() {
+    fun everyPassModeUsesTheDocumentedOffsetWireByte() {
         val wireModes =
             GatePassMode.entries.map { mode ->
                 val closed = adapter(GateMechanism.SECTOR, maintenance = true, normalOpen = false)
@@ -93,11 +106,10 @@ class PuloonAdapterValidationTest {
                 PuloonFrameCodec
                     .decode(transaction.encode(0))
                     .payload[1]
-                    .toInt()
-                    .toChar()
+                    .toInt() and 0xFF
             }
 
-        assertEquals("0123456789ABCDEF".toList(), wireModes)
+        assertEquals((0x30..0x3F).toList(), wireModes)
     }
 
     @Test

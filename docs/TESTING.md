@@ -6,8 +6,12 @@ malformed payloads, defensive copies, bounded buffers, all documented command gr
 not require an open port.
 
 The suite also covers concurrent callers, explicit reconnect versus pending automatic reconnect, safe initial-open failure,
+polling-disabled reconnect handshakes, stale partial-frame reset, checked native-port closure, correlated trace allocation,
 caller cancellation, vendor-header sequence wrap, delimiter-collision counters, maximum frame size, sustained fragmented decoding, strict field parsing, settings
 completeness/uniqueness/ranges, hardware-profile capability snapshots, all pass modes, and mechanism-specific boundaries.
+
+Control-panel tests verify profile-specific sensor and diagnostic inventories, authoritative readable-setting loads,
+write-only field preservation, changed-group-only configuration writes, and partial-failure reconciliation.
 
 Run the production gate locally:
 

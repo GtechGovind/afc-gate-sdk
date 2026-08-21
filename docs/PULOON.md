@@ -142,6 +142,11 @@ normal-open mode, UPS or TCU outside India, TCU outside V2.8 SectorDoor, or chil
 `GateSdk.support(config)` uses the same validation, so applications
 cannot accidentally render options that the configured hardware cannot execute.
 
+The supplied PGcuTp `GcuInfo.xml` also names Boarding and SideDoor controller types, but neither V2.5 nor V2.8 provides
+their wire contract. They are intentionally unsupported rather than inferred from test-tool menus. The XML also lists
+24 BLDC sensors when TCU is disabled, while the normative PDFs define sensors 21–24 only for TCU layouts. Non-TCU BLDC
+21–24 meanings therefore remain unavailable pending authoritative vendor documentation or captured hardware evidence.
+
 Document inconsistencies are handled explicitly. The DateTime response diagram identifies command `P` even
 though the command list and request use `X`, so responses using either byte are accepted. The open/close-delay examples
 say “10 seconds,” but their stated 0.1-second unit and maximum are one second; the implementation follows the stated
@@ -157,9 +162,14 @@ polarity from physical observation. It never converts an undocumented assumption
 
 `connect()` reports success only after the serial port opens and a valid `S` status response is decoded. The SDK then polls status at the configured interval; Puloon requires at least 101 milliseconds. Set `statusPollInterval = null` to disable background polling and call `refreshStatus()` explicitly.
 
-Read-only requests may be retried according to `readRetries`, except V2.8 TCU status. A TCU status response resets token
-counters, so status is attempted once to prevent a lost first response from being replaced by misleading zero counters.
+Read-only requests may be retried according to `readRetries`, except status. A V2.8 controller can append TCU counters
+even when a caller's module profile is stale, and a status response resets those counters. Status is therefore always
+attempted once so a lost first response cannot be replaced by misleading zero counters.
 Passage, emergency, reset, diagnostics, clock, mode, timing, and settings writes are never retried or replayed after a reconnect.
+
+After an automatic transport reconnect, the SDK performs a fresh status handshake before restoring public `CONNECTED`
+state. This handshake runs even when periodic polling is disabled; a failed handshake closes the reopened transport and
+continues bounded-backoff recovery.
 
 If a status response violates the selected revision, the protocol error written to the application log includes the field name, zero-based
 payload offset, received byte, accepted range, payload length, and complete hexadecimal status payload. The session also

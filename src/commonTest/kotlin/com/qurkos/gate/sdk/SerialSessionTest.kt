@@ -78,6 +78,25 @@ class SerialSessionTest {
         }
 
     @Test
+    fun statusIsNotRetriedWhenProfileOmitsTcuBecauseControllerMayStillAppendResettingCounters() =
+        runBlocking {
+            val transport = TestSerialTransport()
+            val adapter =
+                PuloonAdapter(
+                    GateHardwareProfile(site = GateSite.INDIA, protocolRevision = GateProtocolRevision.V2_8),
+                    maintenanceOperationsEnabled = false,
+                )
+            val session = createSession(transport, adapter, readRetries = 3)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            val status = assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Status)).value
+
+            assertIs<GateResult.Failure>(session.transact(status))
+
+            assertEquals(1, transport.writes.size)
+            session.disconnect()
+        }
+
+    @Test
     fun reconnectDoesNotReplaySuccessfulStateChangingCommand() =
         runBlocking {
             val transport =
@@ -101,6 +120,31 @@ class SerialSessionTest {
             assertEquals(1, transport.writes.size)
             session.disconnect()
             Unit
+        }
+
+    @Test
+    fun reconnectResetsPartiallyDecodedBytesFromTheFailedTransportSession() =
+        runBlocking {
+            val transport =
+                TestSerialTransport { request, fake ->
+                    fake.respond(request, "V0001.23".encodeToByteArray())
+                }
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 0, reconnect = true)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            transport.sendRaw(byteArrayOf(0x0A, 0x30, 0x31, 0x30, 'V'.code.toByte()))
+            delay(10.milliseconds)
+
+            transport.fail()
+            withTimeout(2.seconds) {
+                while (transport.openCount < 2 || session.connectionState.value != GateConnectionState.CONNECTED) {
+                    delay(10.milliseconds)
+                }
+            }
+            val firmware = assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Firmware)).value
+
+            assertIs<GateResult.Success<*>>(session.transact(firmware))
+            session.disconnect()
         }
 
     @Test
@@ -298,6 +342,9 @@ internal class TestSerialTransport(
             openFailuresRemaining -= 1
             mutableState.value = SerialTransportState.FAILED
             error("Simulated open failure")
+        }
+        while (incomingChannel.tryReceive().isSuccess) {
+            // A newly opened transport must not expose bytes from the previous native session.
         }
         mutableState.value = SerialTransportState.OPEN
     }

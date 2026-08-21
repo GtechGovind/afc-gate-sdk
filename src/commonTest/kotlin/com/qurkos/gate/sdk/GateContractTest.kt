@@ -9,14 +9,23 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class GateContractTest {
     @Test
@@ -172,9 +181,104 @@ class GateContractTest {
             Unit
         }
 
+    @Test
+    fun automaticReconnectPerformsStatusHandshakeWhenPollingIsDisabled() =
+        runBlocking {
+            val transport = verifiedTransport()
+            val gate =
+                createGate(
+                    transport,
+                    GateHardwareProfile(),
+                    GateRuntimeOptions(
+                        responseTimeout = 100.milliseconds,
+                        readRetries = 0,
+                        statusPollInterval = null,
+                        reconnectPolicy = ReconnectPolicy.ExponentialBackoff(10.milliseconds, 20.milliseconds),
+                    ),
+                )
+            assertIs<GateResult.Success<Unit>>(gate.connect())
+
+            transport.fail()
+            withTimeout(2.seconds) {
+                while (transport.openCount < 2 || gate.connectionState.value != GateConnectionState.CONNECTED) {
+                    delay(10.milliseconds)
+                }
+            }
+
+            assertTrue(transport.writes.map(PuloonFrameCodec::decode).count { it.command == ascii('S') } >= 2)
+            gate.disconnect()
+        }
+
+    @Test
+    fun explicitConnectCancelsAnAutomaticReconnectHandshakeBeforeReportingSuccess() =
+        runBlocking {
+            val reconnectHandshakeStarted = CompletableDeferred<Unit>()
+            val holdReconnectHandshake = CompletableDeferred<Unit>()
+            var statusRequests = 0
+            val transport =
+                TestSerialTransport { request, fake ->
+                    if (request.command == ascii('S')) {
+                        statusRequests += 1
+                        if (statusRequests == 2) {
+                            reconnectHandshakeStarted.complete(Unit)
+                            holdReconnectHandshake.await()
+                        }
+                    }
+                    fake.respond(request, responseFor(request, baseStatus()))
+                }
+            val gate =
+                createGate(
+                    transport,
+                    GateHardwareProfile(),
+                    GateRuntimeOptions(
+                        responseTimeout = 100.milliseconds,
+                        readRetries = 0,
+                        statusPollInterval = null,
+                        reconnectPolicy = ReconnectPolicy.ExponentialBackoff(10.milliseconds, 20.milliseconds),
+                    ),
+                )
+            assertIs<GateResult.Success<Unit>>(gate.connect())
+            transport.fail()
+            withTimeout(2.seconds) { reconnectHandshakeStarted.await() }
+
+            assertIs<GateResult.Success<Unit>>(withTimeout(2.seconds) { gate.connect() })
+            delay(50.milliseconds)
+
+            assertEquals(GateConnectionState.CONNECTED, gate.connectionState.value)
+            assertEquals(2, transport.openCount)
+            assertEquals(3, statusRequests)
+            gate.disconnect()
+        }
+
+    @Test
+    fun concurrentLifecycleAndStatusTrafficUsesUniqueTraceSequences() =
+        runBlocking {
+            val gate = createGate(verifiedTransport(), GateHardwareProfile())
+            val observed = mutableListOf<GateEvent>()
+            val collector = launch { gate.events.collect(observed::add) }
+            yield()
+            assertIs<GateResult.Success<Unit>>(gate.connect())
+
+            coroutineScope {
+                listOf(
+                    async { gate.refreshStatus() },
+                    async { gate.disconnect() },
+                ).awaitAll()
+            }
+            yield()
+            collector.cancelAndJoin()
+
+            val sent = observed.filterIsInstance<GateEvent.CommandSent>()
+            val received = observed.filterIsInstance<GateEvent.ResponseReceived>()
+            assertEquals(sent.size, sent.map { it.sequence }.distinct().size)
+            assertEquals(sent.map { it.sequence }.toSet(), received.map { it.sequence }.toSet())
+        }
+
     private fun createGate(
         transport: TestSerialTransport,
         hardware: GateHardwareProfile,
+        runtime: GateRuntimeOptions =
+            GateRuntimeOptions(statusPollInterval = null, reconnectPolicy = ReconnectPolicy.Disabled),
     ): Gate =
         SerialGateController(
             config =
@@ -182,7 +286,7 @@ class GateContractTest {
                     vendor = GateVendor.PULOON,
                     serial = SerialConnectionConfig(SerialPortName("fake"), SerialParameters(57_600)),
                     hardware = hardware,
-                    runtime = GateRuntimeOptions(statusPollInterval = null, reconnectPolicy = ReconnectPolicy.Disabled),
+                    runtime = runtime,
                 ),
             adapter = PuloonAdapter(hardware, maintenanceOperationsEnabled = false),
             transport = transport,

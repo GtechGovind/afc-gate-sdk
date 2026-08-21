@@ -49,6 +49,7 @@ internal class SerialGateController(
     private val mutableConnectionState = MutableStateFlow(GateConnectionState.DISCONNECTED)
     private val mutableEvents = MutableSharedFlow<GateEvent>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
     private val operationMutex = Mutex()
+    private val traceSequenceMutex = Mutex()
     private var traceSequence = 0L
     private var normalOpenMode = config.hardware.normalOpen
     private val session =
@@ -260,7 +261,7 @@ internal class SerialGateController(
         successDetail: (T) -> String,
         block: suspend () -> GateResult<T>,
     ): GateResult<T> {
-        val sequence = ++traceSequence
+        val sequence = traceSequenceMutex.withLock { ++traceSequence }
         val started = TimeSource.Monotonic.markNow()
         mutableEvents.tryEmit(GateEvent.CommandSent(sequence, command, requestDetail, Clock.System.now()))
         val result = block()

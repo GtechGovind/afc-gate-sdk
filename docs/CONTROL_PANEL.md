@@ -81,7 +81,10 @@ Puloon `Gate` with the public factory and routes actions as follows:
 
 Select the actual protocol revision, mechanism, Standard/BLDC controller variant, site, and installed modules. Impossible
 combinations are rejected before connection. After the status handshake, the panel reads the controller's complete
-settings block and uses it as the editable baseline; it does not overwrite hardware from display defaults.
+settings block, passage mode, standby policy, and door timing and uses them as the editable baseline. Safety-region and
+UPS-delay commands have no read operation, so their displayed values remain local until the operator edits them. Saving
+writes only changed controller groups; it never writes untouched display defaults. If a later command fails, confirmed
+groups become the discard baseline while unconfirmed edits remain visibly unsaved.
 
 | Control-panel action | SDK operation |
 |---|---|

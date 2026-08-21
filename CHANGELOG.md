@@ -13,17 +13,17 @@ tools. Recompile consumers and explicitly select `controllerVariant = BLDC` only
 - Added `GateControllerVariant` so BLDC-only invalid-ticket behavior is never advertised to standard SectorDoor or
   SwingDoor controllers.
 - Enforced V2.8 SectorDoor for TCU profiles, corrected TCU sensor IDs to 21–24, and rejected V2.8 token suffixes for V2.5.
-- Made TCU status reads non-retryable because the controller clears token counters after responding; a lost response can
-  no longer be hidden by a retry that returns zero counters.
+- Made every status read non-retryable because a V2.8 controller may return and clear TCU counters even when configuration
+  metadata is stale; a lost response can no longer be hidden by a retry that returns zero counters.
 - Preserved general versus child-sensor fault categories, aggregate faults from unmapped raw bits, and the uncalibrated
   return-cup signal without claiming an undocumented occupied polarity.
 - Validated RTC years, whole-second standby values, and door-timing responses symmetrically with write limits.
-- Prevented hidden reconnect after an initial open failure, serialized disconnect against in-flight transactions, and
-  guaranteed failed/cancelled JVM opens release acquired native handles.
-- Loaded the physical controller settings before control-panel editing and added profile-exact BLDC, revision, TCU, and
-  Swing safety-region preflight validation.
-- Hardened releases so tags must already be reachable from `main`, checksum files use exact asset basenames, and native
-  installer filenames are stable across GitHub upload normalization.
+- Prevented hidden reconnect after an initial open failure, required a status handshake after every reconnect even without
+  polling, reset stale decoder input, serialized trace/transaction lifecycles, and made failed native closes observable.
+- Loaded every readable physical setting before control-panel editing, wrote only operator-edited setting groups,
+  reconciled partial failures without marking unknown values saved, and added profile-exact sensor/diagnostic metadata.
+- Hardened releases so validation gates draft creation and every artifact job, tags must already be reachable from `main`,
+  checksum files use exact asset basenames, and native installer filenames are stable across GitHub upload normalization.
 - Constrained vulnerable Dokka/ktlint-only Jackson, jsoup, and Logback transitives. Disabled Gradle build-output caching
   to mitigate Kotlin's build-cache deserialization advisory without forcing a prerelease Kotlin runtime on consumers.
 

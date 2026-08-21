@@ -9,8 +9,33 @@ permissions:
   contents: read
 
 jobs:
+  validate-release:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out tagged source and main history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag, project version, and main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          project_version="$(awk -F= '$1 == "sdkVersion" { print $2 }' gradle.properties)"
+          test -n "$project_version"
+          test "$GITHUB_REF_NAME" = "$project_version"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "Release tags must point to a commit already reachable from origin/main." >&2
+            exit 1
+          }
+
   prepare-release:
     name: Prepare draft release
+    needs: validate-release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -25,7 +50,11 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_REF_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --draft=true
+            is_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
+            test "$is_draft" = "true" || {
+              echo "Release $GITHUB_REF_NAME is already published and is immutable." >&2
+              exit 1
+            }
           else
             gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
           fi
@@ -49,19 +78,6 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
-
-      - name: Validate tag and project version
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$GITHUB_REF_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          project_version="$(./gradlew -q properties | awk '/^version:/ { print $2 }')"
-          test "$GITHUB_REF_NAME" = "$project_version"
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor HEAD origin/main || {
-            echo "Release tags must point to a commit already reachable from origin/main." >&2
-            exit 1
-          }
 
       - name: Clean and verify release
         run: ./gradlew --no-daemon clean check dokkaHtmlJar assemble :control-panel:jar publishToMavenLocal

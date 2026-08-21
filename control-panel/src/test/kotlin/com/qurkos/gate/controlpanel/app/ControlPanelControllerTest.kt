@@ -96,7 +96,7 @@ class ControlPanelControllerTest {
                     .first { it.id == 15 }
                     .health,
             )
-            assertTrue(fake.statusReads > 0)
+            assertEquals(1, fake.statusReads)
             controller.close()
         }
 
@@ -198,24 +198,54 @@ class ControlPanelControllerTest {
         }
 
     @Test
-    fun configurationSaveRoutesEveryTypedControllerSetting() =
+    fun configurationSaveWritesOnlyTheControllerGroupEditedByTheOperator() =
         runTest {
             val fake = FakeGate()
             val controller = controller(fake)
             controller.onConnect()
             advanceUntilIdle()
 
-            controller.onConfigurationChanged(GateConfigurationUi(hasUnsavedChanges = true))
+            controller.onConfigurationChanged(
+                controller.state.value.configuration
+                    .copy(safetyRegion = "2"),
+            )
             controller.onSaveConfiguration()
             advanceUntilIdle()
 
-            assertEquals(1, fake.passModes.size)
+            assertTrue(fake.passModes.isEmpty())
             assertEquals(1, fake.safetyRegions.size)
             assertTrue(fake.upsDelays.isEmpty())
             assertTrue(fake.standbyWrites.isEmpty())
-            assertEquals(1, fake.timingWrites.size)
-            assertEquals(8, fake.settingWrites.single().size)
+            assertTrue(fake.timingWrites.isEmpty())
+            assertTrue(fake.settingWrites.isEmpty())
             assertFalse(controller.state.value.configuration.hasUnsavedChanges)
+            controller.close()
+        }
+
+    @Test
+    fun failedConfigurationWriteKeepsUnconfirmedFieldsDirtyAndPreservesConfirmedFields() =
+        runTest {
+            val fake = FakeGate(passModeResult = GateResult.Failure(GateError.Device("1", "rejected")))
+            val controller = controller(fake)
+            controller.onConnect()
+            advanceUntilIdle()
+            val connected = controller.state.value.configuration
+            controller.onConfigurationChanged(
+                connected.copy(
+                    noEntryTimeoutSeconds = "11",
+                    passageMode = "FREE_ENTRY_LOCKED_EXIT_NORMAL_CLOSED",
+                ),
+            )
+
+            controller.onSaveConfiguration()
+            advanceUntilIdle()
+
+            assertEquals(1, fake.settingWrites.size)
+            assertEquals(1, fake.passModes.size)
+            assertTrue(controller.state.value.configuration.hasUnsavedChanges)
+            controller.onDiscardConfiguration()
+            assertEquals("11", controller.state.value.configuration.noEntryTimeoutSeconds)
+            assertEquals("CONTROLLED_BOTH", controller.state.value.configuration.passageMode)
             controller.close()
         }
 

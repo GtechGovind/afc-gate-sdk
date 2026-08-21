@@ -2,7 +2,12 @@ package com.qurkos.gate.controlpanel.ui.model
 
 import androidx.compose.runtime.Immutable
 import com.qurkos.gate.sdk.GateCapability
+import com.qurkos.gate.sdk.GateHardwareProfile
+import com.qurkos.gate.sdk.GateMechanism
+import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
+import com.qurkos.gate.sdk.GateProtocolRevision
+import com.qurkos.gate.sdk.GateSite
 
 /** Top-level destinations available from the control-panel sidebar. */
 enum class ControlPanelDestination(
@@ -340,30 +345,94 @@ object NoOpControlPanelCallbacks : ControlPanelCallbacks {
 /** Complete ordered controller sensor inventory used by the external sensor panel. */
 fun defaultGateSensors(): List<GateSensorUi> = gateSensors((1..19).filter { it != 10 }.toSet())
 
-internal fun gateSensors(ids: Set<Int>): List<GateSensorUi> =
+internal fun gateSensors(
+    ids: Set<Int>,
+    hardware: GateHardwareProfile? = null,
+): List<GateSensorUi> =
     ids.sorted().map { id ->
-        val name =
-            when (id) {
-                10, 20, 21, 22 -> "Child/optional sensor ${id.toString().padStart(2, '0')}"
-                23, 24 -> "SwingDoor sensor $id"
-                25 -> "TCU path A sensor"
-                26 -> "TCU path B sensor"
-                else -> "Sensor ${id.toString().padStart(2, '0')}"
-            }
+        val metadata = sensorMetadata(id, hardware)
         sensor(
             id = id,
-            code = if (id <= 24) "S${id.toString().padStart(2, '0')}" else "TCU-${if (id == 25) "A" else "B"}",
-            name = name,
-            description = "Puloon GCU profile-specific physical input",
-            group =
-                when (id) {
-                    in 1..6 -> SensorGroup.ENTRY
-                    in 7..13, in 20..22 -> SensorGroup.SAFETY
-                    in 14..19 -> SensorGroup.EXIT
-                    23, 24 -> SensorGroup.MECHANISM
-                    else -> SensorGroup.SECURITY
-                },
+            code = metadata.code,
+            name = metadata.name,
+            description = metadata.description,
+            group = metadata.group,
         )
+    }
+
+private data class SensorMetadata(
+    val code: String,
+    val name: String,
+    val description: String,
+    val group: SensorGroup,
+)
+
+private fun sensorMetadata(
+    id: Int,
+    hardware: GateHardwareProfile?,
+): SensorMetadata {
+    tcuSensorMetadata(id, hardware)?.let { return it }
+    swingSensorMetadata(id, hardware)?.let { return it }
+    childSensorMetadata(id, hardware)?.let { return it }
+    val number = id.toString().padStart(2, '0')
+    return SensorMetadata(
+        code = "S$number",
+        name = "Sensor $number",
+        description = "Puloon GCU profile-specific physical input",
+        group = defaultSensorGroup(id),
+    )
+}
+
+private fun tcuSensorMetadata(
+    id: Int,
+    hardware: GateHardwareProfile?,
+): SensorMetadata? {
+    val hasTokenControlUnit =
+        hardware?.let {
+            it.protocolRevision == GateProtocolRevision.V2_8 &&
+                it.mechanism == GateMechanism.SECTOR &&
+                it.site in setOf(GateSite.INDIA, GateSite.KOLKATA_INDIA) &&
+                GateModule.TOKEN_CONTROL_UNIT in it.modules
+        } == true
+    if (!hasTokenControlUnit || id !in 21..24) return null
+    val side = if (id % 2 == 1) "A" else "B"
+    return if (id <= 22) {
+        SensorMetadata("RC-$side", "Return-cup $side sensor", "V2.8 token-control-unit return-cup input", SensorGroup.SECURITY)
+    } else {
+        SensorMetadata("TCU-$side", "TCU path $side sensor", "V2.8 token path input", SensorGroup.SECURITY)
+    }
+}
+
+private fun swingSensorMetadata(
+    id: Int,
+    hardware: GateHardwareProfile?,
+): SensorMetadata? {
+    if (hardware?.mechanism != GateMechanism.SWING || id !in 23..24) return null
+    val side = if (id == 23) "A" else "B"
+    return SensorMetadata("SW-$side", "SwingDoor $side sensor", "SwingDoor mechanism input", SensorGroup.MECHANISM)
+}
+
+private fun childSensorMetadata(
+    id: Int,
+    hardware: GateHardwareProfile?,
+): SensorMetadata? {
+    val installed = hardware?.site == GateSite.CHINA && GateModule.CHILD_SENSORS in hardware.modules
+    if (!installed || id !in setOf(10, 20, 21, 22)) return null
+    return SensorMetadata(
+        "CH-${id.toString().padStart(2, '0')}",
+        "Child detection sensor $id",
+        "China-profile child-detection input",
+        SensorGroup.SAFETY,
+    )
+}
+
+private fun defaultSensorGroup(id: Int): SensorGroup =
+    when (id) {
+        in 1..6 -> SensorGroup.ENTRY
+        in 7..13, in 20..22 -> SensorGroup.SAFETY
+        in 14..19 -> SensorGroup.EXIT
+        23, 24 -> SensorGroup.MECHANISM
+        else -> SensorGroup.SECURITY
     }
 
 private fun sensor(
@@ -439,7 +508,7 @@ internal fun diagnosticsFor(
             "Door close test",
             "Run T/02 door-close output",
             true,
-            requiredCapability = GateCapability.RETURN_CUP_DIAGNOSTIC,
+            requiredCapability = GateCapability.DIAGNOSTICS,
         ),
         DiagnosticTestUi("door-free", "Door free test", "Run T/03 door-free output", true, requiredCapability = GateCapability.DIAGNOSTICS),
         DiagnosticTestUi("door-lock", "Door lock test", "Run T/04 door-lock output", true, requiredCapability = GateCapability.DIAGNOSTICS),
@@ -448,7 +517,7 @@ internal fun diagnosticsFor(
             "Green indicator ON",
             "Run T/21 direction indicator output",
             true,
-            requiredCapability = GateCapability.RETURN_CUP_DIAGNOSTIC,
+            requiredCapability = GateCapability.DIAGNOSTICS,
         ),
         DiagnosticTestUi(
             "indicator-green-off",
@@ -538,14 +607,14 @@ internal fun diagnosticsFor(
             "Return-cup LED ON",
             "Run T/57 TCU lamp output",
             true,
-            requiredCapability = GateCapability.DIAGNOSTICS,
+            requiredCapability = GateCapability.RETURN_CUP_DIAGNOSTIC,
         ),
         DiagnosticTestUi(
             "return-cup-off",
             "Return-cup LED OFF",
             "Run T/58 TCU lamp output",
             true,
-            requiredCapability = GateCapability.DIAGNOSTICS,
+            requiredCapability = GateCapability.RETURN_CUP_DIAGNOSTIC,
         ),
         DiagnosticTestUi(
             "ups",

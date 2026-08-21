@@ -88,7 +88,9 @@ internal class PuloonAdapter(
                     command = 'S',
                     data = ByteArray(0),
                     responseCommands = setOf('S'),
-                    idempotent = GateModule.TOKEN_CONTROL_UNIT !in hardware.modules,
+                    // V2.8 controllers may append TCU counters even when a caller's module profile is stale. Reading
+                    // those counters clears them on the controller, so retrying any status request can lose events.
+                    idempotent = false,
                 ) { data ->
                     GateResponse.Status(PuloonPayloadCodec.decodeStatus(data, hardware))
                 }

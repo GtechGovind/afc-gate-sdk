@@ -76,7 +76,7 @@ repositories {
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.qurkos.afc:afc-gate-sdk:1.0.3")
+            implementation("com.qurkos.afc:afc-gate-sdk:2.0.0")
         }
     }
 }
@@ -93,6 +93,7 @@ import com.qurkos.gate.sdk.GateDeviceConfig
 import com.qurkos.gate.sdk.GateError
 import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateModule
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateResult
 import com.qurkos.gate.sdk.GateSdk
 import com.qurkos.gate.sdk.GateSite
@@ -109,6 +110,7 @@ val created = GateSdk.create(
         hardware = GateHardwareProfile(
             site = GateSite.INDIA,
             modules = setOf(GateModule.UPS),
+            protocolRevision = GateProtocolRevision.V2_8,
         ),
     ),
 )

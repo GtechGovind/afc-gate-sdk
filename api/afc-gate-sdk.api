@@ -468,18 +468,20 @@ public final class com/qurkos/gate/sdk/GateFirmwareInfo {
 
 public final class com/qurkos/gate/sdk/GateHardwareProfile {
 	public fun <init> ()V
-	public fun <init> (Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;Z)V
-	public synthetic fun <init> (Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;ZLcom/qurkos/gate/sdk/GateProtocolRevision;)V
+	public synthetic fun <init> (Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;ZLcom/qurkos/gate/sdk/GateProtocolRevision;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lcom/qurkos/gate/sdk/GateMechanism;
 	public final fun component2 ()Lcom/qurkos/gate/sdk/GateSite;
 	public final fun component3 ()Ljava/util/Set;
 	public final fun component4 ()Z
-	public final fun copy (Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;Z)Lcom/qurkos/gate/sdk/GateHardwareProfile;
-	public static synthetic fun copy$default (Lcom/qurkos/gate/sdk/GateHardwareProfile;Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;ZILjava/lang/Object;)Lcom/qurkos/gate/sdk/GateHardwareProfile;
+	public final fun component5 ()Lcom/qurkos/gate/sdk/GateProtocolRevision;
+	public final fun copy (Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;ZLcom/qurkos/gate/sdk/GateProtocolRevision;)Lcom/qurkos/gate/sdk/GateHardwareProfile;
+	public static synthetic fun copy$default (Lcom/qurkos/gate/sdk/GateHardwareProfile;Lcom/qurkos/gate/sdk/GateMechanism;Lcom/qurkos/gate/sdk/GateSite;Ljava/util/Set;ZLcom/qurkos/gate/sdk/GateProtocolRevision;ILjava/lang/Object;)Lcom/qurkos/gate/sdk/GateHardwareProfile;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getMechanism ()Lcom/qurkos/gate/sdk/GateMechanism;
 	public final fun getModules ()Ljava/util/Set;
 	public final fun getNormalOpen ()Z
+	public final fun getProtocolRevision ()Lcom/qurkos/gate/sdk/GateProtocolRevision;
 	public final fun getSite ()Lcom/qurkos/gate/sdk/GateSite;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -590,7 +592,12 @@ public final class com/qurkos/gate/sdk/GatePassageResult : java/lang/Enum {
 	public static final field EXIT_TIMEOUT Lcom/qurkos/gate/sdk/GatePassageResult;
 	public static final field EXIT_WRONG_WAY_USED Lcom/qurkos/gate/sdk/GatePassageResult;
 	public static final field IDLE Lcom/qurkos/gate/sdk/GatePassageResult;
+	public static final field NO_ENTRY_TIMEOUT Lcom/qurkos/gate/sdk/GatePassageResult;
+	public static final field PASSAGE_COMPLETED Lcom/qurkos/gate/sdk/GatePassageResult;
+	public static final field PASSING_TIMEOUT Lcom/qurkos/gate/sdk/GatePassageResult;
+	public static final field TAILING_USED Lcom/qurkos/gate/sdk/GatePassageResult;
 	public static final field UNKNOWN Lcom/qurkos/gate/sdk/GatePassageResult;
+	public static final field WRONG_WAY_USED Lcom/qurkos/gate/sdk/GatePassageResult;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lcom/qurkos/gate/sdk/GatePassageResult;
 	public static fun values ()[Lcom/qurkos/gate/sdk/GatePassageResult;
@@ -614,6 +621,14 @@ public final class com/qurkos/gate/sdk/GatePowerStatus {
 	public final fun getUpsPresent ()Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/qurkos/gate/sdk/GateProtocolRevision : java/lang/Enum {
+	public static final field V2_5 Lcom/qurkos/gate/sdk/GateProtocolRevision;
+	public static final field V2_8 Lcom/qurkos/gate/sdk/GateProtocolRevision;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/qurkos/gate/sdk/GateProtocolRevision;
+	public static fun values ()[Lcom/qurkos/gate/sdk/GateProtocolRevision;
 }
 
 public abstract interface class com/qurkos/gate/sdk/GateResult {

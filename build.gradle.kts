@@ -168,6 +168,10 @@ tasks.withType<AbstractArchiveTask>().configureEach {
     isReproducibleFileOrder = true
 }
 
+tasks.withType<Jar>().configureEach {
+    manifest.attributes["Implementation-Version"] = project.version.toString()
+}
+
 tasks.named("check") {
     dependsOn(
         "detektCommonMainSourceSet",

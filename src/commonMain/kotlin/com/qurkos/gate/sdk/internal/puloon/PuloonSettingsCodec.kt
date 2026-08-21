@@ -16,10 +16,14 @@ internal object PuloonSettingsCodec {
             GateSetting.TagTimeoutFromLastTag(decodeBoolean(bytes[5], '1', '0', "tag timeout")),
             GateSetting.TailingSensitivity(decodeDigit(bytes[6], 0..1, "tailing performance")),
             GateSetting.BuzzerTimeoutUnits(
-                decodeAsciiHex(bytes, 7).also { require(it <= MAX_BUZZER_UNITS) { "Invalid buzzer timeout" } },
+                PuloonOffsetHexCodec.decode(bytes, 7, "buzzer timeout").also {
+                    require(it <= MAX_BUZZER_UNITS) { "Invalid buzzer timeout" }
+                },
             ),
             GateSetting.SafetyRegionTimeout(
-                decodeAsciiHex(bytes, 9).let { if (it == DISABLED_TIMEOUT) null else it.seconds },
+                PuloonOffsetHexCodec.decode(bytes, 9, "safety-region timeout").let {
+                    if (it == DISABLED_TIMEOUT) null else it.seconds
+                },
             ),
             GateSetting.ChildDetection(decodeDigit(bytes[11], 0..2, "child detection")),
         )
@@ -40,25 +44,11 @@ internal object PuloonSettingsCodec {
             add((ascii('0') + values.hurryUpLevel).toByte())
             add(ascii(if (values.tagTimeoutFromLast) '1' else '0'))
             add((ascii('0') + values.tailingSensitivity).toByte())
-            addAll(encodeAsciiHex(values.buzzerTimeoutUnits).toList())
-            addAll(encodeAsciiHex(values.safetyRegionTimeoutSeconds ?: DISABLED_TIMEOUT).toList())
+            addAll(PuloonOffsetHexCodec.encode(values.buzzerTimeoutUnits).toList())
+            addAll(PuloonOffsetHexCodec.encode(values.safetyRegionTimeoutSeconds ?: DISABLED_TIMEOUT).toList())
             add((ascii('0') + values.childDetectionLevel).toByte())
         }.toByteArray()
     }
-
-    private fun encodeAsciiHex(value: Int): ByteArray =
-        value
-            .toString(HEX_BASE)
-            .uppercase()
-            .padStart(2, '0')
-            .encodeToByteArray()
-
-    private fun decodeAsciiHex(
-        bytes: ByteArray,
-        offset: Int,
-    ): Int =
-        bytes.copyOfRange(offset, offset + 2).decodeToString().toIntOrNull(HEX_BASE)
-            ?: throw IllegalArgumentException("Invalid Puloon hexadecimal setting")
 
     private fun decodeDecimal(
         bytes: ByteArray,
@@ -96,7 +86,6 @@ internal object PuloonSettingsCodec {
     private const val NO_ENTRY_TIMEOUT_LENGTH = 3
     private const val MAX_BUZZER_UNITS = 0xFE
     private const val DISABLED_TIMEOUT = 0xFF
-    private const val HEX_BASE = 16
 }
 
 private data class PuloonSettingValues(

@@ -138,6 +138,7 @@ data class GateTrafficUi(
 /** Editable operational settings. Values are strings so partially entered form values remain representable. */
 @Immutable
 data class GateConfigurationUi(
+    val protocolRevision: String = "V2_8",
     val mechanism: String = "SECTOR",
     val site: String = "GENERIC",
     val upsInstalled: Boolean = false,

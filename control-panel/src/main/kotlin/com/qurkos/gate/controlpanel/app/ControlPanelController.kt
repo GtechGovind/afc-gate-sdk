@@ -37,6 +37,7 @@ import com.qurkos.gate.sdk.GateLampColor
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateResult
 import com.qurkos.gate.sdk.GateRuntimeOptions
 import com.qurkos.gate.sdk.GateSafetyRegion
@@ -1033,6 +1034,7 @@ private fun GateConfigurationUi.normalizedProfile(): GateConfigurationUi =
     }.let { if (it.mechanism == "SWING") it.copy(normalOpenMode = false) else it }
 
 private fun GateConfigurationUi.toHardwareProfile(): GateHardwareProfile? {
+    val revision = GateProtocolRevision.entries.firstOrNull { it.name == protocolRevision } ?: return null
     val mechanism = GateMechanism.entries.firstOrNull { it.name == this.mechanism } ?: return null
     val site = GateSite.entries.firstOrNull { it.name == this.site } ?: return null
     val modules =
@@ -1041,10 +1043,17 @@ private fun GateConfigurationUi.toHardwareProfile(): GateHardwareProfile? {
             if (tokenControlUnitInstalled) add(GateModule.TOKEN_CONTROL_UNIT)
             if (childSensorsInstalled) add(GateModule.CHILD_SENSORS)
         }
-    return GateHardwareProfile(mechanism, site, modules, normalOpenMode)
+    return GateHardwareProfile(
+        mechanism = mechanism,
+        site = site,
+        modules = modules,
+        normalOpen = normalOpenMode,
+        protocolRevision = revision,
+    )
 }
 
 private data class ConnectionFacts(
+    val protocolRevision: String,
     val mechanism: String,
     val site: String,
     val ups: Boolean,
@@ -1060,6 +1069,7 @@ private data class ConnectionFacts(
 
 private fun GateConfigurationUi.connectionFacts(): ConnectionFacts =
     ConnectionFacts(
+        protocolRevision,
         mechanism,
         site,
         upsInstalled,

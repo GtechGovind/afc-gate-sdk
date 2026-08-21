@@ -10,6 +10,7 @@ import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
 import com.qurkos.gate.sdk.GatePassageRequest
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateResult
 import com.qurkos.gate.sdk.GateSafetyRegion
 import com.qurkos.gate.sdk.GateSite
@@ -90,6 +91,25 @@ class PuloonAdapterValidationTest {
     }
 
     @Test
+    fun upsUsesOffsetNibblesForHexadecimalDigits() {
+        val transaction = assertSuccess(adapter(GateMechanism.SECTOR).transaction(GateOperation.SetUpsShutdownDelay(100)))
+        val payload = PuloonFrameCodec.decode(transaction.encode(0)).payload
+
+        assertEquals(listOf(0x59, 0x30, 0x3A), payload.map { it.toInt() and 0xFF })
+    }
+
+    @Test
+    fun v28ExtensionsAreRejectedForV25BeforeSerialTransmission() {
+        val legacy = adapter(GateMechanism.SECTOR, revision = GateProtocolRevision.V2_5, maintenance = true)
+
+        assertTrue(com.qurkos.gate.sdk.GateCapability.DOOR_TIMING !in legacy.capabilities)
+        assertTrue(com.qurkos.gate.sdk.GateCapability.STANDBY !in legacy.capabilities)
+        assertFailure(legacy.transaction(GateOperation.ReadDoorTiming))
+        assertFailure(legacy.transaction(GateOperation.ReadStandbyPolicy))
+        assertFailure(legacy.transaction(GateOperation.Diagnostic(GateDiagnostic.ReturnCupLamp(true))))
+    }
+
+    @Test
     fun diagnosticBoundsAndMaintenanceCapabilityAreConsistent() {
         val enabled = adapter(GateMechanism.SECTOR, maintenance = true)
         val disabled = adapter(GateMechanism.SECTOR, maintenance = false)
@@ -151,6 +171,7 @@ class PuloonAdapterValidationTest {
         mechanism: GateMechanism,
         maintenance: Boolean = false,
         normalOpen: Boolean = false,
+        revision: GateProtocolRevision = GateProtocolRevision.V2_8,
     ): PuloonAdapter =
         PuloonAdapter(
             GateHardwareProfile(
@@ -158,6 +179,7 @@ class PuloonAdapterValidationTest {
                 site = GateSite.KOLKATA_INDIA,
                 modules = setOf(GateModule.UPS, GateModule.TOKEN_CONTROL_UNIT),
                 normalOpen = normalOpen,
+                protocolRevision = revision,
             ),
             maintenanceOperationsEnabled = maintenance,
         )

@@ -4,8 +4,11 @@ import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
+import com.qurkos.gate.sdk.GatePassageResult
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateSetting
 import com.qurkos.gate.sdk.GateSite
+import com.qurkos.gate.sdk.internal.puloon.PuloonOffsetHexCodec
 import com.qurkos.gate.sdk.internal.puloon.PuloonPayloadCodec
 import com.qurkos.gate.sdk.internal.puloon.PuloonSettingsCodec
 import com.qurkos.gate.sdk.internal.puloon.ascii
@@ -54,7 +57,7 @@ class PuloonPayloadValidationTest {
     }
 
     @Test
-    fun statusRequiresConfiguredSuffixesAndDecodesUpsAndTokenFields() {
+    fun statusDecodesObservedSuffixesWithoutRequiringConfigurationParity() {
         val hardware =
             GateHardwareProfile(
                 site = GateSite.INDIA,
@@ -75,9 +78,9 @@ class PuloonPayloadValidationTest {
         assertEquals(12, decoded.tokenPathACount)
         assertEquals(34, decoded.tokenPathBCount)
         assertTrue(decoded.returnCupOccupied == true)
-        assertFailsWith<IllegalArgumentException> {
-            PuloonPayloadCodec.decodeStatus(baseStatus(), hardware)
-        }
+        val temporarilyMissingSuffixes = PuloonPayloadCodec.decodeStatus(baseStatus(), hardware)
+        assertNull(temporarilyMissingSuffixes.power)
+        assertNull(temporarilyMissingSuffixes.tokenPathACount)
         val noModules = PuloonPayloadCodec.decodeStatus(baseStatus(), GateHardwareProfile())
         assertNull(noModules.power)
         assertFalse(noModules.sensors.hasFault)
@@ -124,17 +127,55 @@ class PuloonPayloadValidationTest {
         }
         val swing =
             PuloonPayloadCodec.decodeSensors(
-                "002080000000".encodeToByteArray(),
+                byteArrayOf(0x3F, 0x3F, 0x3D, 0x3F, 0x37, 0x3F) + "000000".encodeToByteArray(),
                 GateHardwareProfile(mechanism = GateMechanism.SWING),
             )
         assertTrue(swing.active.any { it.number == 23 })
         assertTrue(swing.active.any { it.number == 24 })
         val child =
             PuloonPayloadCodec.decodeSensors(
-                "000008000000".encodeToByteArray(),
+                byteArrayOf(0x3F, 0x3F, 0x3F, 0x3F, 0x3F, 0x37) + "000000".encodeToByteArray(),
                 GateHardwareProfile(site = GateSite.CHINA, modules = setOf(GateModule.CHILD_SENSORS)),
             )
         assertTrue(child.active.any { it.number == 22 })
+    }
+
+    @Test
+    fun sensorActivityIsActiveLowWhileFaultBitsAreActiveHigh() {
+        val response = byteArrayOf(0x3E, 0x3F, 0x3F, 0x3F, 0x3F, 0x3F, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30)
+
+        val decoded = PuloonPayloadCodec.decodeSensors(response, GateHardwareProfile())
+
+        assertEquals(setOf(1), decoded.active.mapTo(mutableSetOf()) { it.number })
+        assertEquals(setOf(1), decoded.faulted.mapTo(mutableSetOf()) { it.number })
+    }
+
+    @Test
+    fun passageResultUsesTheSelectedProtocolRevision() {
+        val legacy = GateHardwareProfile(protocolRevision = GateProtocolRevision.V2_5)
+        val current = GateHardwareProfile(protocolRevision = GateProtocolRevision.V2_8)
+        val resultTwo = baseStatus().also { it[5] = ascii('2') }
+
+        assertEquals(GatePassageResult.NO_ENTRY_TIMEOUT, PuloonPayloadCodec.decodeStatus(resultTwo, legacy).passageResult)
+        assertEquals(GatePassageResult.EXIT_COMPLETED, PuloonPayloadCodec.decodeStatus(resultTwo, current).passageResult)
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeStatus(baseStatus().also { it[5] = ascii('7') }, legacy)
+        }
+    }
+
+    @Test
+    fun statusAcceptsEveryDocumentedAndDerivedSuffixLength() {
+        val hardware = GateHardwareProfile(site = GateSite.INDIA)
+        val variants =
+            listOf(
+                baseStatus(),
+                baseStatus() + byteArrayOf(0x00, 0x00) + "FF".encodeToByteArray(),
+                baseStatus() + "123401".encodeToByteArray(),
+                baseStatus() + byteArrayOf(0x08, 0x01) + "99".encodeToByteArray() + "123401".encodeToByteArray(),
+            )
+
+        variants.forEach { PuloonPayloadCodec.decodeStatus(it, hardware) }
+        assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.decodeStatus(baseStatus() + byteArrayOf(0), hardware) }
     }
 
     @Test
@@ -153,8 +194,8 @@ class PuloonPayloadValidationTest {
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeDoorTiming(byteArrayOf(ascii('1'), ascii('/'), ascii('0'), ascii('0'), ascii('0')))
         }
-        assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.encodeOffsetHexByte(-1) }
-        assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.encodeOffsetHexByte(256) }
+        assertFailsWith<IllegalArgumentException> { PuloonOffsetHexCodec.encode(-1) }
+        assertFailsWith<IllegalArgumentException> { PuloonOffsetHexCodec.encode(256) }
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeStandby(byteArrayOf(ascii('0'), ascii('1'), ascii('4'), ascii('3'), 0x3F))
         }
@@ -176,7 +217,12 @@ class PuloonPayloadValidationTest {
                 GateSetting.SafetyRegionTimeout(null),
                 GateSetting.ChildDetection(2),
             )
-        assertEquals(boundaries, PuloonSettingsCodec.decode(PuloonSettingsCodec.encode(boundaries)))
+        val encoded = PuloonSettingsCodec.encode(boundaries)
+        assertEquals(0x3F, encoded[7].toInt() and 0xFF)
+        assertEquals(0x3E, encoded[8].toInt() and 0xFF)
+        assertEquals(0x3F, encoded[9].toInt() and 0xFF)
+        assertEquals(0x3F, encoded[10].toInt() and 0xFF)
+        assertEquals(boundaries, PuloonSettingsCodec.decode(encoded))
         listOf(0, 3, 4, 5, 6, 7, 9, 11).forEach { offset ->
             val malformed = PuloonSettingsCodec.encode(boundaries).also { it[offset] = ascii('X') }
             assertFailsWith<IllegalArgumentException> { PuloonSettingsCodec.decode(malformed) }

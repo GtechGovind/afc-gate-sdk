@@ -185,6 +185,21 @@ public data class GatePowerStatus(
 /** Reason the controller last consumed or cleared an authorized passage count. */
 public enum class GatePassageResult {
     IDLE,
+
+    /** Direction-neutral completion value reported by V2.5 controllers. */
+    PASSAGE_COMPLETED,
+
+    /** No-entry timeout value reported by V2.5 controllers. */
+    NO_ENTRY_TIMEOUT,
+
+    /** Passing timeout value reported by V2.5 controllers. */
+    PASSING_TIMEOUT,
+
+    /** Tailing counter-use value reported by V2.5 controllers. */
+    TAILING_USED,
+
+    /** Wrong-way counter-use value reported by V2.5 controllers. */
+    WRONG_WAY_USED,
     ENTRY_COMPLETED,
     EXIT_COMPLETED,
     ENTRY_TIMEOUT,

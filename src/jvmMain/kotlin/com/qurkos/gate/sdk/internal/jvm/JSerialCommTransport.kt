@@ -58,6 +58,10 @@ internal class JSerialCommTransport(
             if (!withContext(ioDispatcher) { candidate.openPort() }) {
                 error("Unable to open serial port ${config.port.value}")
             }
+            withContext(ioDispatcher) {
+                candidate.clearDTR()
+                candidate.clearRTS()
+            }
             port = candidate
             mutableState.value = SerialTransportState.OPEN
             readerJob = startReader(candidate)
@@ -114,6 +118,7 @@ internal class JSerialCommTransport(
                 parameters.stopBits.toJSerialComm(),
                 parameters.parity.toJSerialComm(),
             )
+            setFlowControl(SerialPort.FLOW_CONTROL_DISABLED)
             setComPortTimeouts(
                 SerialPort.TIMEOUT_READ_SEMI_BLOCKING or SerialPort.TIMEOUT_WRITE_BLOCKING,
                 READ_TIMEOUT_MILLISECONDS,

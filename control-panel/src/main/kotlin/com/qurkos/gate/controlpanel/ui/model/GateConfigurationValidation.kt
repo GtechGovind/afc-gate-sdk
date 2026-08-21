@@ -43,6 +43,7 @@ internal object PuloonInputRules {
 internal fun GateConfigurationUi.hasValidInputs(): Boolean =
     listOf(
         serialPort.isNotBlank(),
+        protocolRevision == "V2_5" || protocolRevision == "V2_8",
         mechanism == "SECTOR" || mechanism == "SWING",
         site in setOf("GENERIC", "INDIA", "KOLKATA_INDIA", "CHINA"),
         passageMode.isNotBlank(),

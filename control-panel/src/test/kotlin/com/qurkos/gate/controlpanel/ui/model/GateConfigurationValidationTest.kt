@@ -26,4 +26,11 @@ class GateConfigurationValidationTest {
         assertFalse(GateConfigurationUi(serialPort = "").hasValidInputs())
         assertFalse(GateConfigurationUi(responseTimeoutMs = "one second").hasValidInputs())
     }
+
+    @Test
+    fun acceptsOnlyImplementedProtocolRevisions() {
+        assertTrue(GateConfigurationUi(protocolRevision = "V2_5").hasValidInputs())
+        assertTrue(GateConfigurationUi(protocolRevision = "V2_8").hasValidInputs())
+        assertFalse(GateConfigurationUi(protocolRevision = "V3_0").hasValidInputs())
+    }
 }

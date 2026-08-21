@@ -175,6 +175,21 @@ public enum class GateModule {
 }
 
 /**
+ * Protocol revision used to interpret responses and expose revision-specific capabilities.
+ *
+ * Puloon V2.5 and V2.8 share framing and most commands but differ in passage-result semantics, token-control-unit
+ * telemetry, return-cup diagnostics, standby configuration, and door timing. Selecting the physical controller's
+ * revision prevents the SDK from sending extension commands to older firmware.
+ */
+public enum class GateProtocolRevision {
+    /** Puloon interface specification V2.5 and compatible earlier firmware. */
+    V2_5,
+
+    /** Puloon interface specification V2.8, including the V2.7/V2.8 extension commands. */
+    V2_8,
+}
+
+/**
  * Hardware facts used to select safe capabilities and payload layouts.
  *
  * @property mechanism Physical barrier mechanism.
@@ -182,12 +197,14 @@ public enum class GateModule {
  * @property modules Installed optional modules. Supplying a module that is not physically installed can produce invalid
  * status interpretation and must be avoided.
  * @property normalOpen Whether the profile uses the normal-open barrier operating variant.
+ * @property protocolRevision Wire-protocol revision implemented by the controller firmware.
  */
 public data class GateHardwareProfile(
     public val mechanism: GateMechanism = GateMechanism.SECTOR,
     public val site: GateSite = GateSite.GENERIC,
     public val modules: Set<GateModule> = emptySet(),
     public val normalOpen: Boolean = false,
+    public val protocolRevision: GateProtocolRevision = GateProtocolRevision.V2_8,
 )
 
 /**

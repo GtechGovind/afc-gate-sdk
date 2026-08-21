@@ -2,6 +2,24 @@
 
 All notable changes are recorded here. The project follows semantic versioning.
 
+## 2.0.0 - 2026-08-21
+
+This release adds `protocolRevision` to `GateHardwareProfile`. Recompile consumers against 2.0.0 and select `V2_5` for
+legacy controllers; source using default or named arguments otherwise remains unchanged.
+
+- Added an explicit Puloon `V2_5`/`V2_8` hardware-profile revision and a matching control-panel selector so response
+  semantics and capabilities follow the connected firmware rather than an implicit assumption.
+- Corrected physical sensor activity to active-low while preserving active-high fault bits, matching both specifications
+  and the vendor test tool.
+- Corrected all offset-hex payload fields (`0x30..0x3F`, including A-F values) for settings and UPS shutdown commands.
+- Added direction-neutral V2.5 passage-result values while retaining the expanded direction-specific V2.8 result map.
+- Accepted every valid 23/27/29/33-byte status layout and decoded observed UPS/TCU suffixes safely, allowing mixed firmware
+  deployments without weakening field validation.
+- Restricted V2.8-only door-timing, standby, and return-cup commands before serial transmission and explicitly disabled
+  hardware flow control, DTR, and RTS at the JVM boundary.
+- Expanded regression coverage for both protocol revisions, boundary nibbles, optional status suffixes, capability
+  rejection, sensor polarity, and control-panel validation.
+
 ## 1.0.3 - 2026-08-21
 
 - Audited every V2.8 Puloon command, response, field offset, numeric representation, profile restriction, and documented

@@ -26,24 +26,35 @@ class PuloonProtocolTest {
     }
 
     @Test
-    fun frameMatchesSpecificationExample() {
+    fun frameMatchesDeployedVendorToolEncoding() {
         val actual = PuloonFrameCodec.encode(PuloonFrame(0x00F2, 3, "C00".encodeToByteArray()))
         val expected =
             byteArrayOf(
                 0x0A,
-                0xF2.toByte(),
-                0x00,
-                0x03,
+                0x3F,
+                0x32,
+                0x33,
                 0x43,
                 0x30,
                 0x30,
-                0x46,
                 0x36,
-                0x31,
-                0x42,
+                0x32,
+                0x45,
+                0x43,
                 0x0D,
             )
         assertContentEquals(expected, actual)
+    }
+
+    @Test
+    fun encodedHeaderCannotCollideWithFrameDelimiters() {
+        listOf(0x0A, 0x0D, 0xFF).forEach { sequence ->
+            val encoded = PuloonFrameCodec.encode(PuloonFrame(sequence, 0x0F, "S00".encodeToByteArray()))
+            assertTrue(encoded.copyOfRange(1, 4).none { it == PuloonFrameCodec.LF || it == PuloonFrameCodec.CR })
+            val decoded = PuloonFrameCodec.decode(encoded)
+            assertEquals(sequence, decoded.sequence)
+            assertEquals(0x0F, decoded.retry)
+        }
     }
 
     @Test
@@ -91,6 +102,16 @@ class PuloonProtocolTest {
                 GateSetting.ChildDetection(0),
             )
         assertEquals(settings, PuloonSettingsCodec.decode(PuloonSettingsCodec.encode(settings)))
+    }
+
+    @Test
+    fun clockRejectsYearsThatCannotBeRepresentedOnWire() {
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.encodeClock(GateClock(LocalDateTime(1999, 12, 31, 23, 59, 59)))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.encodeClock(GateClock(LocalDateTime(2100, 1, 1, 0, 0, 0)))
+        }
     }
 
     @Test

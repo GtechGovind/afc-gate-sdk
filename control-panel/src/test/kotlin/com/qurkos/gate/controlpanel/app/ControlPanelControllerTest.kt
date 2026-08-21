@@ -96,7 +96,7 @@ class ControlPanelControllerTest {
                     .first { it.id == 15 }
                     .health,
             )
-            assertTrue(fake.statusReads > 0)
+            assertEquals(1, fake.statusReads)
             controller.close()
         }
 
@@ -198,29 +198,59 @@ class ControlPanelControllerTest {
         }
 
     @Test
-    fun configurationSaveRoutesEveryTypedControllerSetting() =
+    fun configurationSaveWritesOnlyTheControllerGroupEditedByTheOperator() =
         runTest {
             val fake = FakeGate()
             val controller = controller(fake)
             controller.onConnect()
             advanceUntilIdle()
 
-            controller.onConfigurationChanged(GateConfigurationUi(hasUnsavedChanges = true))
+            controller.onConfigurationChanged(
+                controller.state.value.configuration
+                    .copy(safetyRegion = "2"),
+            )
             controller.onSaveConfiguration()
             advanceUntilIdle()
 
-            assertEquals(1, fake.passModes.size)
+            assertTrue(fake.passModes.isEmpty())
             assertEquals(1, fake.safetyRegions.size)
             assertTrue(fake.upsDelays.isEmpty())
             assertTrue(fake.standbyWrites.isEmpty())
-            assertEquals(1, fake.timingWrites.size)
-            assertEquals(8, fake.settingWrites.single().size)
+            assertTrue(fake.timingWrites.isEmpty())
+            assertTrue(fake.settingWrites.isEmpty())
             assertFalse(controller.state.value.configuration.hasUnsavedChanges)
             controller.close()
         }
 
     @Test
-    fun fullOperationsGridRoutesReadMaintenanceRtcCounterAndResetCommands() =
+    fun failedConfigurationWriteKeepsUnconfirmedFieldsDirtyAndPreservesConfirmedFields() =
+        runTest {
+            val fake = FakeGate(passModeResult = GateResult.Failure(GateError.Device("1", "rejected")))
+            val controller = controller(fake)
+            controller.onConnect()
+            advanceUntilIdle()
+            val connected = controller.state.value.configuration
+            controller.onConfigurationChanged(
+                connected.copy(
+                    noEntryTimeoutSeconds = "11",
+                    passageMode = "FREE_ENTRY_LOCKED_EXIT_NORMAL_CLOSED",
+                ),
+            )
+
+            controller.onSaveConfiguration()
+            advanceUntilIdle()
+
+            assertEquals(1, fake.settingWrites.size)
+            assertEquals(1, fake.passModes.size)
+            assertTrue(controller.state.value.configuration.hasUnsavedChanges)
+            controller.onDiscardConfiguration()
+            assertEquals("11", controller.state.value.configuration.noEntryTimeoutSeconds)
+            assertEquals("CONTROLLED_BOTH", controller.state.value.configuration.passageMode)
+            controller.close()
+        }
+
+    @Test
+    fun bulkRunIsReadOnlyWhileIndividualProtectedOperationsRemainAvailable() =
         runTest {
             val fake = FakeGate()
             val controller = controller(fake)
@@ -238,14 +268,24 @@ class ControlPanelControllerTest {
             controller.onDiagnosticRunAll()
             advanceUntilIdle()
 
+            assertEquals(0, fake.initializeCalls)
+            assertEquals(0, fake.clockWrites.size)
+            assertEquals(0, fake.clearCounterCalls)
+            assertEquals(0, fake.resetCalls)
+            assertTrue(
+                controller.state.value.diagnostics
+                    .filterNot { it.requiresMaintenance }
+                    .all { it.state == DiagnosticState.PASSED },
+            )
+
+            listOf("initialize", "clock-sync", "clear-counters", "reset").forEach { id ->
+                controller.onDiagnosticRun(id)
+                advanceUntilIdle()
+            }
             assertEquals(1, fake.initializeCalls)
             assertEquals(1, fake.clockWrites.size)
             assertEquals(1, fake.clearCounterCalls)
             assertEquals(1, fake.resetCalls)
-            assertTrue(
-                controller.state.value.diagnostics
-                    .all { it.state == DiagnosticState.PASSED },
-            )
             controller.close()
         }
 

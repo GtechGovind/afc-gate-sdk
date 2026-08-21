@@ -25,6 +25,10 @@ such as `-SNAPSHOT`.
 Do not rebuild an already released version. If an artifact is wrong, publish a new patch version so provenance and caches
 remain trustworthy.
 
+The workflow rejects any release tag whose commit is not reachable from `origin/main`. Do not tag a pull-request head.
+Installer signing, macOS notarization, and physical HIL certification are deployment-owner responsibilities unless their
+credentials and controlled hardware are explicitly configured in CI.
+
 ## Automation credentials
 
 GitHub Packages uses the workflow-provided `GITHUB_TOKEN`; no long-lived repository secret is required. If Maven Central or

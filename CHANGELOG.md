@@ -2,6 +2,49 @@
 
 All notable changes are recorded here. The project follows semantic versioning.
 
+## 3.0.0 - 2026-08-21
+
+This release intentionally changes Puloon framing and hardware-profile semantics to match both shipped PGcuTp vendor
+tools. Recompile consumers and explicitly select `controllerVariant = BLDC` only for BLDC SectorDoor controllers.
+
+- Replaced the delimiter-unsafe raw 16-bit frame counter with the deployed vendor-tool encoding: one unsigned-byte
+  counter represented by two `0x30..0x3F` nibbles and one offset retry nibble. Added vectors for `0x0A`, `0x0D`, and
+  `0xFF`, fragmentation, correlation, retry, and wrap at 256.
+- Added `GateControllerVariant` so BLDC-only invalid-ticket behavior is never advertised to standard SectorDoor or
+  SwingDoor controllers.
+- Enforced V2.8 SectorDoor for TCU profiles, corrected TCU sensor IDs to 21–24, and rejected V2.8 token suffixes for V2.5.
+- Made every status read non-retryable because a V2.8 controller may return and clear TCU counters even when configuration
+  metadata is stale; a lost response can no longer be hidden by a retry that returns zero counters.
+- Preserved general versus child-sensor fault categories, aggregate faults from unmapped raw bits, and the uncalibrated
+  return-cup signal without claiming an undocumented occupied polarity.
+- Validated RTC years, whole-second standby values, and door-timing responses symmetrically with write limits.
+- Prevented hidden reconnect after an initial open failure, required a status handshake after every reconnect even without
+  polling, reset stale decoder input, serialized trace/transaction lifecycles, and made failed native closes observable.
+- Loaded every readable physical setting before control-panel editing, wrote only operator-edited setting groups,
+  reconciled partial failures without marking unknown values saved, and added profile-exact sensor/diagnostic metadata.
+- Hardened releases so validation gates draft creation and every artifact job, tags must already be reachable from `main`,
+  checksum files use exact asset basenames, and native installer filenames are stable across GitHub upload normalization.
+- Constrained vulnerable Dokka/ktlint-only Jackson, jsoup, and Logback transitives. Disabled Gradle build-output caching
+  to mitigate Kotlin's build-cache deserialization advisory without forcing a prerelease Kotlin runtime on consumers.
+
+## 2.0.0 - 2026-08-21
+
+This release adds `protocolRevision` to `GateHardwareProfile`. Recompile consumers against 2.0.0 and select `V2_5` for
+legacy controllers; source using default or named arguments otherwise remains unchanged.
+
+- Added an explicit Puloon `V2_5`/`V2_8` hardware-profile revision and a matching control-panel selector so response
+  semantics and capabilities follow the connected firmware rather than an implicit assumption.
+- Corrected physical sensor activity to active-low while preserving active-high fault bits, matching both specifications
+  and the vendor test tool.
+- Corrected all offset-hex payload fields (`0x30..0x3F`, including A-F values) for settings and UPS shutdown commands.
+- Added direction-neutral V2.5 passage-result values while retaining the expanded direction-specific V2.8 result map.
+- Accepted every valid 23/27/29/33-byte status layout and decoded observed UPS/TCU suffixes safely, allowing mixed firmware
+  deployments without weakening field validation.
+- Restricted V2.8-only door-timing, standby, and return-cup commands before serial transmission and explicitly disabled
+  hardware flow control, DTR, and RTS at the JVM boundary.
+- Expanded regression coverage for both protocol revisions, boundary nibbles, optional status suffixes, capability
+  rejection, sensor polarity, and control-panel validation.
+
 ## 1.0.3 - 2026-08-21
 
 - Audited every V2.8 Puloon command, response, field offset, numeric representation, profile restriction, and documented

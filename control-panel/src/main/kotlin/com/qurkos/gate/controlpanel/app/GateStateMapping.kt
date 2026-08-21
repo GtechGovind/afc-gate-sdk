@@ -26,8 +26,9 @@ internal fun ControlPanelUiState.withHardwareStatus(status: GateStatus): Control
                 ).distinct().joinToString(" · ")
             } ?: "Not configured",
         tokenStatusDetail =
-            if (status.tokenPathACount != null || status.tokenPathBCount != null || status.returnCupOccupied != null) {
-                "Path A ${status.tokenPathACount ?: "—"} · Path B ${status.tokenPathBCount ?: "—"} · Cup ${if (status.returnCupOccupied == true) "occupied" else "clear"}"
+            if (status.tokenPathACount != null || status.tokenPathBCount != null || status.returnCupSignalActive != null) {
+                "Path A ${status.tokenPathACount ?: "—"} · Path B ${status.tokenPathBCount ?: "—"} · " +
+                    "Cup signal ${status.returnCupSignalActive?.let { if (it) "high" else "low" } ?: "—"}"
             } else {
                 "Not configured"
             },

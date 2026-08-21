@@ -9,9 +9,11 @@ select `GateVendor.PULOON` and continue using the common `Gate` interface.
 
 ```kotlin
 import com.qurkos.gate.sdk.GateDeviceConfig
+import com.qurkos.gate.sdk.GateControllerVariant
 import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateSdk
 import com.qurkos.gate.sdk.GateSite
 import com.qurkos.gate.sdk.GateVendor
@@ -24,8 +26,10 @@ val result = GateSdk.create(
         serial = SerialConnectionConfig(SerialPortName("COM4")),
         hardware = GateHardwareProfile(
             mechanism = GateMechanism.SECTOR,
+            controllerVariant = GateControllerVariant.BLDC,
             site = GateSite.KOLKATA_INDIA,
             modules = setOf(GateModule.UPS),
+            protocolRevision = GateProtocolRevision.V2_8,
         ),
     ),
 )
@@ -33,7 +37,13 @@ val result = GateSdk.create(
 
 When parameters are omitted, Puloon uses 57,600 baud, 8 data bits, one stop bit, and no parity. A caller may supply explicit `SerialParameters` when its controller is configured differently.
 
-Puloon GCU supports `SECTOR` and `SWING` mechanisms; `FLAP` is rejected by the factory. The hardware profile matters because the protocol exposes some features only for particular sites, mechanisms, normal-open state, or installed modules. Configure the actual device; do not select a profile only to enable a capability. Use `GateSdk.support(config)` before connection to obtain the exact capabilities, pass modes, safety regions, and sensor identifiers for a profile.
+Puloon GCU supports `SECTOR` and `SWING` mechanisms; `FLAP` is rejected by the factory. Set `protocolRevision` to the
+controller's interface revision. It defaults to V2.8 for source compatibility, but a V2.5 controller must be configured as
+`V2_5` so legacy status values are interpreted correctly and newer extension commands remain unavailable. The hardware
+profile matters because the protocol exposes some features only for particular sites, mechanisms, normal-open state, or
+installed modules. Configure the actual device; do not select a profile only to enable a capability. Use
+`GateSdk.support(config)` before connection to obtain the exact capabilities, pass modes, safety regions, and sensor
+identifiers for a profile.
 
 ## Passage commands
 
@@ -44,7 +54,9 @@ gate.rejectPassage(GateDirection.EXIT)
 gate.setEmergency(true)
 ```
 
-India profiles additionally support multi-person passage, lamp selection, invalid-ticket rejection, and clock operations. Kolkata also enables standby policy. UPS shutdown is enabled only when `GateModule.UPS` is present.
+India profiles additionally support multi-person passage, lamp selection, and clock operations. Invalid-ticket rejection
+is advertised only for `GateControllerVariant.BLDC` SectorDoor controllers. Kolkata also enables standby policy. UPS
+shutdown is enabled only when `GateModule.UPS` is present.
 
 ## Command coverage
 
@@ -57,23 +69,37 @@ India profiles additionally support multi-person passage, lamp selection, invali
 | `refreshStatus` | `S` | Base |
 | `setPassMode` | `D` | Base |
 | `setSafetyRegion` | `G` | Base; legal region depends on mechanism |
-| `clearPassageCounters` | `C` | Maintenance opt-in |
+| `clearPassageCounters` | `C` | Maintenance opt-in; also closes the barrier |
 | `readSensors` | `H` | Base |
 | `readClock`, `setClock` | `X` | India profiles |
 | `setUpsShutdownDelaySeconds` | `Y` | UPS module |
-| `readStandbyPolicy`, `setStandbyPolicy` | `U` | Kolkata profile |
-| `readDoorTiming`, `setDoorTiming` | `U` | Base |
+| `readStandbyPolicy`, `setStandbyPolicy` | `U` | V2.8 Kolkata profile |
+| `readDoorTiming`, `setDoorTiming` | `U` | V2.8 |
 | `readSettings`, `applySettings` | `P` | Base |
 | `runDiagnostic` | `T` | Maintenance opt-in |
 | `reset` | `R` | Maintenance opt-in |
 
 Maintenance operations are disabled by default. Set `maintenanceOperationsEnabled = true` only in service tooling where reset and actuator tests are intentionally available.
 
-## V2.8 wire audit
+## V2.5 and V2.8 compatibility
 
-The implementation is checked against every command and response in GCU Interface Specification V2.8. The table below
-records the byte-level contract enforced by the adapter; offsets are zero-based within response sub-data after the command
-byte and two-byte error code.
+| Area | V2.5 | V2.8 | SDK behavior |
+| --- | --- | --- | --- |
+| Framing, sequence, retry, CRC | PDF example shows raw fields; shipped PGcuTp uses offset nibbles | Same conflict | SDK follows both shipped PGcuTp versions: one-byte sequence as two offset nibbles and retry as one offset nibble |
+| Passage result | Seven direction-neutral values (`0`–`6`) | Expanded directional values (`0`–`9`, `@`) | Revision-specific typed result mapping |
+| Physical sensor bits | Active-low | Active-low | A cleared bit is reported as active; fault bits remain active-high |
+| Status length | 23 base, 27 with UPS | 23 base; TCU adds six and UPS adds four bytes | V2.5 accepts 23/27; V2.8 accepts validated 23/27/29/33 bytes |
+| TCU sensor bank | Not available | SectorDoor sensors 21–24 | TCU profiles are rejected unless V2.8 SectorDoor is selected |
+| Door timing `U/1102` | Not available | Available | Capability and transaction rejected on V2.5 |
+| Standby `U/2402` | Not available | Available on Kolkata profile | Capability and transaction rejected on V2.5 |
+| Return-cup lamp diagnostic | Not available | Available with TCU | Rejected unless V2.8 and TCU are selected |
+| Offset-hex values | `0x30..0x3F` nibbles | Same; examples include `0x3A` for ten | Dedicated offset-nibble codec, never ASCII `A..F` |
+
+## Wire audit
+
+The implementation is checked against the V2.5 and V2.8 GCU interface specifications. The table below records the
+byte-level contract enforced by the adapter; offsets are zero-based within response sub-data after the command byte and
+two-byte error code.
 
 | Command | Request data | Successful response validation |
 | --- | --- | --- |
@@ -82,15 +108,15 @@ byte and two-byte error code.
 | `E` | ASCII `0`/`1` | acknowledgement only |
 | `I`, `R`, `C` | none | acknowledgement only |
 | `P` | selector plus complete 12-byte settings block for writes | selector plus exactly 12 validated setting bytes for reads |
-| `S` | none | exact 23-byte base status, plus four UPS bytes and/or six TCU bytes selected by the hardware profile |
+| `S` | none | validated 23-byte base status with an observed four-byte UPS and/or six-byte TCU suffix |
 | `T` | test group and documented action | acknowledgement only; colors and actuator actions are group-specific |
 | `H` | none | exactly 12 offset-nibble sensor and sensor-error bytes |
 | `D` | one `0x30`–`0x3F` pass-mode byte | acknowledgement only; mechanism/site/door-mode rules are checked before writing |
 | `G` | ASCII region `1`–`6` for SectorDoor or `1`–`3` for SwingDoor | acknowledgement only |
 | `X` | selector and optional `yyMMddHHmmss` | selector plus exactly 12 valid date/time digits for reads |
-| `Y` | two uppercase hexadecimal digits, in ten-second units | acknowledgement only |
-| `U/2402` | selector, fixed extension ID, timeout, and pass mode | exact selector/timeout/mode response; Kolkata profiles only |
-| `U/1102` | selector, fixed extension ID, and two 0.1-second delays | exact selector and two delay values in the documented `0`–`10` range |
+| `Y` | two offset-hex nibbles (`0x30..0x3F`), in ten-second units | acknowledgement only |
+| `U/2402` | selector, fixed extension ID, timeout, and pass mode | V2.8 only; exact selector/timeout/mode response; Kolkata profiles only |
+| `U/1102` | selector, fixed extension ID, and two 0.1-second delays | V2.8 only; exact selector and two delay values in the documented `0`–`10` range |
 
 The fixed `S` block is decoded as follows:
 
@@ -99,7 +125,7 @@ The fixed `S` block is decoded as follows:
 | 0 | 1 | pass mode | `0x30`–`0x3F` |
 | 1 | 2 | entry count | decimal `00`–`99` |
 | 3 | 2 | exit count | decimal `00`–`99` |
-| 5 | 1 | passage result | `0x30`–`0x39` or `0x40` |
+| 5 | 1 | passage result | V2.5 `0x30`–`0x36`; V2.8 `0x30`–`0x39` or `0x40` |
 | 6 | 1 | entry error | `0x30`, `0x33`, `0x35`, or `0x39` |
 | 7 | 1 | exit error | `0x30`, `0x33`, `0x35`, or `0x39` |
 | 8 | 1 | door faults | base `0x40` plus four fault bits |
@@ -111,22 +137,41 @@ The fixed `S` block is decoded as follows:
 | 23 | 4 | optional UPS | raw online/battery bits plus decimal `00`–`99` or `FF` charge |
 | 23 or 27 | 6 | optional TCU | two decimal counters and return-cup state `00`/`01` |
 
-Puloon profiles are rejected before connection when they request a FLAP mechanism, SwingDoor normal-open mode, UPS or
-TCU outside India, or child sensors outside China. `GateSdk.support(config)` uses the same validation, so applications
+Puloon profiles are rejected before connection when they request a FLAP mechanism, BLDC outside SectorDoor, SwingDoor
+normal-open mode, UPS or TCU outside India, TCU outside V2.8 SectorDoor, or child sensors outside China.
+`GateSdk.support(config)` uses the same validation, so applications
 cannot accidentally render options that the configured hardware cannot execute.
 
-Two inconsistencies in the document are handled explicitly. The DateTime response diagram identifies command `P` even
+The supplied PGcuTp `GcuInfo.xml` also names Boarding and SideDoor controller types, but neither V2.5 nor V2.8 provides
+their wire contract. They are intentionally unsupported rather than inferred from test-tool menus. The XML also lists
+24 BLDC sensors when TCU is disabled, while the normative PDFs define sensors 21–24 only for TCU layouts. Non-TCU BLDC
+21–24 meanings therefore remain unavailable pending authoritative vendor documentation or captured hardware evidence.
+
+Document inconsistencies are handled explicitly. The DateTime response diagram identifies command `P` even
 though the command list and request use `X`, so responses using either byte are accepted. The open/close-delay examples
 say “10 seconds,” but their stated 0.1-second unit and maximum are one second; the implementation follows the stated
-range and unit (`0`–`1000 ms`, in `100 ms` steps).
+range and unit (`0`–`1000 ms`, in `100 ms` steps). V2.8's base status length text does not account for its documented
+six-byte TCU suffix, so the V2.8 decoder derives suffix presence from the received, validated 23/27/29/33-byte length instead
+of trusting that contradictory total.
+
+The V2.8 documents constrain return-cup state to `00` or `01` but do not define which value means occupied. The SDK
+therefore exposes `returnCupSignalActive` and leaves `returnCupOccupied` null until an installation has calibrated the
+polarity from physical observation. It never converts an undocumented assumption into a safety decision.
 
 ## Status and reconnect behavior
 
 `connect()` reports success only after the serial port opens and a valid `S` status response is decoded. The SDK then polls status at the configured interval; Puloon requires at least 101 milliseconds. Set `statusPollInterval = null` to disable background polling and call `refreshStatus()` explicitly.
 
-Read-only requests may be retried according to `readRetries`. Passage, emergency, reset, diagnostics, clock, mode, timing, and settings writes are never retried or replayed after a reconnect.
+Read-only requests may be retried according to `readRetries`, except status. A V2.8 controller can append TCU counters
+even when a caller's module profile is stale, and a status response resets those counters. Status is therefore always
+attempted once so a lost first response cannot be replaced by misleading zero counters.
+Passage, emergency, reset, diagnostics, clock, mode, timing, and settings writes are never retried or replayed after a reconnect.
 
-If a status response violates V2.8, the protocol error written to the application log includes the field name, zero-based
+After an automatic transport reconnect, the SDK performs a fresh status handshake before restoring public `CONNECTED`
+state. This handshake runs even when periodic polling is disabled; a failed handshake closes the reopened transport and
+continues bounded-backoff recovery.
+
+If a status response violates the selected revision, the protocol error written to the application log includes the field name, zero-based
 payload offset, received byte, accepted range, payload length, and complete hexadecimal status payload. The session also
 records per-attempt timeouts, retry/fail decisions, uncorrelated response command/sequence/retry metadata, and truncated
 malformed-frame hex. These diagnostics make firmware, cabling, noise, and correlation analysis possible without enabling

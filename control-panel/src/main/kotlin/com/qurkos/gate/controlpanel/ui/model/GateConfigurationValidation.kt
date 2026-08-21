@@ -40,10 +40,13 @@ internal object PuloonInputRules {
 }
 
 /** Returns whether every editable value can be represented by the current Puloon adapter. */
+@Suppress("CyclomaticComplexMethod") // One centralized preflight intentionally covers every independently editable field.
 internal fun GateConfigurationUi.hasValidInputs(): Boolean =
     listOf(
         serialPort.isNotBlank(),
+        protocolRevision == "V2_5" || protocolRevision == "V2_8",
         mechanism == "SECTOR" || mechanism == "SWING",
+        controllerVariant == "STANDARD" || controllerVariant == "BLDC",
         site in setOf("GENERIC", "INDIA", "KOLKATA_INDIA", "CHINA"),
         passageMode.isNotBlank(),
         standbyPassMode.isNotBlank(),
@@ -52,7 +55,7 @@ internal fun GateConfigurationUi.hasValidInputs(): Boolean =
         PuloonInputRules.pollInterval.accepts(pollIntervalMs),
         PuloonInputRules.doorTiming.accepts(openDurationMs),
         PuloonInputRules.doorTiming.accepts(closeDelayMs),
-        safetyRegion.toIntOrNull() in 1..6,
+        safetyRegion.toIntOrNull() in if (mechanism == "SWING") 1..3 else 1..6,
         PuloonInputRules.upsShutdownDelay.accepts(upsShutdownDelaySeconds),
         PuloonInputRules.standbyTimeout.accepts(standbyTimeoutSeconds),
         PuloonInputRules.noEntryTimeout.accepts(noEntryTimeoutSeconds),
@@ -65,4 +68,7 @@ internal fun GateConfigurationUi.hasValidInputs(): Boolean =
         childDetectionLevel == "0" || (site == "CHINA" && childSensorsInstalled),
         !upsInstalled || site == "INDIA" || site == "KOLKATA_INDIA",
         !tokenControlUnitInstalled || site == "INDIA" || site == "KOLKATA_INDIA",
+        controllerVariant != "BLDC" || mechanism == "SECTOR",
+        !tokenControlUnitInstalled || protocolRevision == "V2_8",
+        !tokenControlUnitInstalled || mechanism == "SECTOR",
     ).all { it }

@@ -12,7 +12,7 @@ diagnostics, and lifecycle through one vendor-neutral interface.
 [![JVM](https://img.shields.io/badge/JVM-17%2B-e76f00?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/17/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-0b7285.svg)](LICENSE)
 [![API](https://img.shields.io/badge/public_API-com.qurkos.gate.sdk-2563eb)](#public-api)
-[![Tests](https://img.shields.io/badge/tests-74_passing-16a34a)](#build-and-verify)
+[![Tests](https://img.shields.io/badge/tests-passing-16a34a)](#build-and-verify)
 [![Coverage](https://img.shields.io/badge/line_coverage-89.82%25-16a34a)](#build-and-verify)
 
 [Quick start](#quick-start) · [Commands](#send-gate-commands) ·
@@ -58,8 +58,7 @@ Core guarantees:
 
 ### 1. Publish the development build
 
-The SDK is not yet published to a remote Maven registry. Install the current
-snapshot into Maven Local:
+For local development, install the current build into Maven Local:
 
 ```bash
 ./gradlew publishToMavenLocal
@@ -76,7 +75,7 @@ repositories {
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.qurkos.afc:afc-gate-sdk:1.0.3")
+            implementation("com.qurkos.afc:afc-gate-sdk:3.0.0")
         }
     }
 }
@@ -90,9 +89,11 @@ The Maven group identifies the AFC artifact. Consumer code imports the shorter
 ```kotlin
 import com.qurkos.gate.sdk.Gate
 import com.qurkos.gate.sdk.GateDeviceConfig
+import com.qurkos.gate.sdk.GateControllerVariant
 import com.qurkos.gate.sdk.GateError
 import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateModule
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateResult
 import com.qurkos.gate.sdk.GateSdk
 import com.qurkos.gate.sdk.GateSite
@@ -108,7 +109,9 @@ val created = GateSdk.create(
         ),
         hardware = GateHardwareProfile(
             site = GateSite.INDIA,
+            controllerVariant = GateControllerVariant.BLDC,
             modules = setOf(GateModule.UPS),
+            protocolRevision = GateProtocolRevision.V2_8,
         ),
     ),
 )
@@ -316,7 +319,7 @@ JDK 17 or newer is required.
 The verification gate includes:
 
 - Kotlin compiler warnings as errors
-- 43 deterministic, hardware-independent tests
+- Deterministic, hardware-independent SDK and control-panel tests
 - ktlint using official Kotlin style
 - Detekt with warning-level findings treated as failures
 - Kotlin public ABI compatibility validation

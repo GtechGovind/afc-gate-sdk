@@ -1,5 +1,7 @@
 package com.qurkos.gate.sdk.puloon
 
+import com.qurkos.gate.sdk.GateCapability
+import com.qurkos.gate.sdk.GateControllerVariant
 import com.qurkos.gate.sdk.GateDiagnostic
 import com.qurkos.gate.sdk.GateDirection
 import com.qurkos.gate.sdk.GateDoorTestAction
@@ -10,6 +12,7 @@ import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
 import com.qurkos.gate.sdk.GatePassageRequest
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateResult
 import com.qurkos.gate.sdk.GateSafetyRegion
 import com.qurkos.gate.sdk.GateSite
@@ -82,11 +85,62 @@ class PuloonAdapterValidationTest {
         assertFailure(
             adapter.transaction(
                 GateOperation.SetStandbyPolicy(
+                    GateStandbyPolicy(1_500.milliseconds, GatePassMode.CONTROLLED_BOTH),
+                    normalOpen = false,
+                ),
+            ),
+        )
+        assertFailure(
+            adapter.transaction(
+                GateOperation.SetStandbyPolicy(
                     GateStandbyPolicy(20.seconds, GatePassMode.FREE_ENTRY_LOCKED_EXIT_NORMAL_OPEN),
                     normalOpen = false,
                 ),
             ),
         )
+    }
+
+    @Test
+    fun upsUsesOffsetNibblesForHexadecimalDigits() {
+        val transaction = assertSuccess(adapter(GateMechanism.SECTOR).transaction(GateOperation.SetUpsShutdownDelay(100)))
+        val payload = PuloonFrameCodec.decode(transaction.encode(0)).payload
+
+        assertEquals(listOf(0x59, 0x30, 0x3A), payload.map { it.toInt() and 0xFF })
+    }
+
+    @Test
+    fun v28ExtensionsAreRejectedForV25BeforeSerialTransmission() {
+        val legacy = adapter(GateMechanism.SECTOR, revision = GateProtocolRevision.V2_5, maintenance = true)
+
+        assertTrue(com.qurkos.gate.sdk.GateCapability.DOOR_TIMING !in legacy.capabilities)
+        assertTrue(com.qurkos.gate.sdk.GateCapability.STANDBY !in legacy.capabilities)
+        assertFailure(legacy.transaction(GateOperation.ReadDoorTiming))
+        assertFailure(legacy.transaction(GateOperation.ReadStandbyPolicy))
+        assertFailure(legacy.transaction(GateOperation.Diagnostic(GateDiagnostic.ReturnCupLamp(true))))
+    }
+
+    @Test
+    fun tokenStatusIsNeverRetriedAndInvalidTicketRequiresBldcSector() {
+        val token = adapter(GateMechanism.SECTOR)
+        val status = assertSuccess(token.transaction(GateOperation.Status))
+        assertTrue(!status.idempotent)
+
+        val standard =
+            PuloonAdapter(
+                GateHardwareProfile(mechanism = GateMechanism.SECTOR, site = GateSite.INDIA),
+                maintenanceOperationsEnabled = false,
+            )
+        val bldc =
+            PuloonAdapter(
+                GateHardwareProfile(
+                    mechanism = GateMechanism.SECTOR,
+                    site = GateSite.INDIA,
+                    controllerVariant = GateControllerVariant.BLDC,
+                ),
+                maintenanceOperationsEnabled = false,
+            )
+        assertTrue(GateCapability.INVALID_TICKET !in standard.capabilities)
+        assertTrue(GateCapability.INVALID_TICKET in bldc.capabilities)
     }
 
     @Test
@@ -130,18 +184,18 @@ class PuloonAdapterValidationTest {
     }
 
     @Test
-    fun sequenceWrapsOnlyAfterFullUnsignedRange() {
+    fun sequenceWrapsAfterDeployedUnsignedByteRange() {
         val adapter = adapter(GateMechanism.SECTOR)
         var firstSequence = -1
         var wrappedSequence = -1
-        repeat(0x1_0001) { index ->
+        repeat(0x101) { index ->
             val transaction =
                 assertSuccess(
                     adapter.transaction(GateOperation.Passage(GatePassageRequest(GateDirection.ENTRY))),
                 )
             val sequence = PuloonFrameCodec.decode(transaction.encode(0)).sequence
             if (index == 0) firstSequence = sequence
-            if (index == 0x1_0000) wrappedSequence = sequence
+            if (index == 0x100) wrappedSequence = sequence
         }
         assertEquals(0, firstSequence)
         assertEquals(0, wrappedSequence)
@@ -151,6 +205,7 @@ class PuloonAdapterValidationTest {
         mechanism: GateMechanism,
         maintenance: Boolean = false,
         normalOpen: Boolean = false,
+        revision: GateProtocolRevision = GateProtocolRevision.V2_8,
     ): PuloonAdapter =
         PuloonAdapter(
             GateHardwareProfile(
@@ -158,6 +213,7 @@ class PuloonAdapterValidationTest {
                 site = GateSite.KOLKATA_INDIA,
                 modules = setOf(GateModule.UPS, GateModule.TOKEN_CONTROL_UNIT),
                 normalOpen = normalOpen,
+                protocolRevision = revision,
             ),
             maintenanceOperationsEnabled = maintenance,
         )

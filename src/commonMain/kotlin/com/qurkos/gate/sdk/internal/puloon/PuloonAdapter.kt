@@ -1,6 +1,7 @@
 package com.qurkos.gate.sdk.internal.puloon
 
 import com.qurkos.gate.sdk.GateCapability
+import com.qurkos.gate.sdk.GateControllerVariant
 import com.qurkos.gate.sdk.GateDescriptor
 import com.qurkos.gate.sdk.GateDiagnostic
 import com.qurkos.gate.sdk.GateDoorTestAction
@@ -12,6 +13,7 @@ import com.qurkos.gate.sdk.GateLampColor
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
+import com.qurkos.gate.sdk.GateProtocolRevision
 import com.qurkos.gate.sdk.GateResult
 import com.qurkos.gate.sdk.GateSafetyRegion
 import com.qurkos.gate.sdk.GateSensorId
@@ -28,6 +30,7 @@ import com.qurkos.gate.sdk.internal.SerialTransaction
 import com.qurkos.gate.sdk.internal.StreamingFrameDecoder
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Puloon GCU implementation of the internal protocol-adapter contract.
@@ -81,7 +84,14 @@ internal class PuloonAdapter(
             is GateOperation.Emergency -> write('E', byteArrayOf(ascii(if (operation.enabled) '1' else '0')))
             GateOperation.Initialize -> write('I')
             GateOperation.Status ->
-                read('S') { data ->
+                transaction(
+                    command = 'S',
+                    data = ByteArray(0),
+                    responseCommands = setOf('S'),
+                    // V2.8 controllers may append TCU counters even when a caller's module profile is stale. Reading
+                    // those counters clears them on the controller, so retrying any status request can lose events.
+                    idempotent = false,
+                ) { data ->
                     GateResponse.Status(PuloonPayloadCodec.decodeStatus(data, hardware))
                 }
             is GateOperation.SetPassMode -> {
@@ -114,24 +124,12 @@ internal class PuloonAdapter(
                 require(operation.seconds in 0..MAX_UPS_SECONDS && operation.seconds % UPS_STEP_SECONDS == 0) {
                     "UPS shutdown delay must be 0..$MAX_UPS_SECONDS seconds in $UPS_STEP_SECONDS-second steps"
                 }
-                write('Y', encodeAsciiHex(operation.seconds / UPS_STEP_SECONDS))
+                write('Y', PuloonOffsetHexCodec.encode(operation.seconds / UPS_STEP_SECONDS))
             }
-            GateOperation.ReadStandbyPolicy ->
-                read('U', byteArrayOf(ascii('1')) + STANDBY_SELECTOR) { data ->
-                    GateResponse.StandbyPolicy(PuloonPayloadCodec.decodeStandby(data))
-                }
-            is GateOperation.SetStandbyPolicy -> {
-                require(isPassModeSupported(operation.policy.passMode, operation.normalOpen)) {
-                    "Standby pass mode ${operation.policy.passMode} is unsupported for ${hardware.mechanism}, " +
-                        "${hardware.site}, normalOpen=${operation.normalOpen}"
-                }
-                write('U', encodeStandby(operation.policy))
-            }
-            GateOperation.ReadDoorTiming ->
-                read('U', byteArrayOf(ascii('1')) + DOOR_TIMING_SELECTOR) { data ->
-                    GateResponse.DoorTiming(PuloonPayloadCodec.decodeDoorTiming(data))
-                }
-            is GateOperation.SetDoorTiming -> write('U', encodeDoorTiming(operation.timing))
+            GateOperation.ReadStandbyPolicy -> readStandbyTransaction()
+            is GateOperation.SetStandbyPolicy -> setStandbyTransaction(operation)
+            GateOperation.ReadDoorTiming -> readDoorTimingTransaction()
+            is GateOperation.SetDoorTiming -> setDoorTimingTransaction(operation)
             GateOperation.ReadSettings ->
                 read('P', byteArrayOf(ascii('1'))) { data ->
                     val settings = if (data.firstOrNull() == ascii('1')) data.drop(1).toByteArray() else data
@@ -144,6 +142,38 @@ internal class PuloonAdapter(
             is GateOperation.Diagnostic -> write('T', encodeDiagnostic(operation.diagnostic))
             GateOperation.Reset -> write('R')
         }
+
+    /** Creates the V2.8 Kolkata standby read after enforcing both compatibility dimensions. */
+    private fun readStandbyTransaction(): PuloonTransaction {
+        requireStandbySupport()
+        return read('U', byteArrayOf(ascii('1')) + STANDBY_SELECTOR) { data ->
+            GateResponse.StandbyPolicy(PuloonPayloadCodec.decodeStandby(data))
+        }
+    }
+
+    /** Validates and creates the V2.8 Kolkata standby write. */
+    private fun setStandbyTransaction(operation: GateOperation.SetStandbyPolicy): PuloonTransaction {
+        requireStandbySupport()
+        require(isPassModeSupported(operation.policy.passMode, operation.normalOpen)) {
+            "Standby pass mode ${operation.policy.passMode} is unsupported for ${hardware.mechanism}, " +
+                "${hardware.site}, normalOpen=${operation.normalOpen}"
+        }
+        return write('U', encodeStandby(operation.policy))
+    }
+
+    /** Creates the V2.8 door-timing read transaction. */
+    private fun readDoorTimingTransaction(): PuloonTransaction {
+        requireV28("Door timing")
+        return read('U', byteArrayOf(ascii('1')) + DOOR_TIMING_SELECTOR) { data ->
+            GateResponse.DoorTiming(PuloonPayloadCodec.decodeDoorTiming(data))
+        }
+    }
+
+    /** Creates the V2.8 door-timing write transaction. */
+    private fun setDoorTimingTransaction(operation: GateOperation.SetDoorTiming): PuloonTransaction {
+        requireV28("Door timing")
+        return write('U', encodeDoorTiming(operation.timing))
+    }
 
     /** Creates an idempotent Puloon read transaction. */
     private fun read(
@@ -182,9 +212,10 @@ internal class PuloonAdapter(
     /** Validates and encodes the selected `U/2402` standby extension. */
     private fun encodeStandby(policy: GateStandbyPolicy): ByteArray {
         val seconds = policy.timeout.inWholeSeconds
+        require(policy.timeout == seconds.toInt().seconds) { "Standby timeout must use whole-second steps" }
         require(seconds in 0..MAX_UNSIGNED_BYTE) { "Standby timeout must be between 0 and 255 seconds" }
         return byteArrayOf(ascii('0')) + STANDBY_SELECTOR +
-            PuloonPayloadCodec.encodeOffsetHexByte(seconds.toInt()) +
+            PuloonOffsetHexCodec.encode(seconds.toInt()) +
             byteArrayOf(ascii('3'), ascii(policy.passMode.wireValue()))
     }
 
@@ -193,8 +224,8 @@ internal class PuloonAdapter(
         val opening = timing.openingDelay.toDelayUnits("opening")
         val closing = timing.closingDelay.toDelayUnits("closing")
         return byteArrayOf(ascii('0')) + DOOR_TIMING_SELECTOR +
-            PuloonPayloadCodec.encodeOffsetHexByte(opening) +
-            PuloonPayloadCodec.encodeOffsetHexByte(closing)
+            PuloonOffsetHexCodec.encode(opening) +
+            PuloonOffsetHexCodec.encode(closing)
     }
 
     /** Converts a duration to documented 100-millisecond door-delay units. */
@@ -219,6 +250,9 @@ internal class PuloonAdapter(
                 byteArrayOf(ascii('3'), (ascii('0') + action).toByte())
             }
             is GateDiagnostic.ReturnCupLamp -> {
+                require(hardware.protocolRevision == GateProtocolRevision.V2_8) {
+                    "Return-cup lamp test requires Puloon protocol V2.8"
+                }
                 require(GateModule.TOKEN_CONTROL_UNIT in hardware.modules) {
                     "Return-cup lamp test requires the token control unit"
                 }
@@ -242,10 +276,27 @@ internal class PuloonAdapter(
         buildSet {
             addAll(BASE_CAPABILITIES)
             if (hardware.isIndia()) addAll(INDIA_CAPABILITIES)
-            if (hardware.site == GateSite.KOLKATA_INDIA) add(GateCapability.STANDBY)
+            if (hardware.protocolRevision == GateProtocolRevision.V2_8) add(GateCapability.DOOR_TIMING)
+            if (hardware.protocolRevision == GateProtocolRevision.V2_8 && hardware.site == GateSite.KOLKATA_INDIA) {
+                add(GateCapability.STANDBY)
+            }
             if (hardware.isIndia() && GateModule.UPS in hardware.modules) add(GateCapability.UPS_SHUTDOWN)
-            if (hardware.isIndia() && hardware.mechanism == GateMechanism.SECTOR) add(GateCapability.INVALID_TICKET)
-            if (maintenanceOperationsEnabled) addAll(MAINTENANCE_CAPABILITIES)
+            if (
+                hardware.isIndia() &&
+                hardware.mechanism == GateMechanism.SECTOR &&
+                hardware.controllerVariant == GateControllerVariant.BLDC
+            ) {
+                add(GateCapability.INVALID_TICKET)
+            }
+            if (maintenanceOperationsEnabled) {
+                addAll(MAINTENANCE_CAPABILITIES)
+                if (
+                    hardware.protocolRevision == GateProtocolRevision.V2_8 &&
+                    GateModule.TOKEN_CONTROL_UNIT in hardware.modules
+                ) {
+                    add(GateCapability.RETURN_CUP_DIAGNOSTIC)
+                }
+            }
         }
 
     private fun supportedSafetyRegions(): Set<GateSafetyRegion> =
@@ -265,8 +316,8 @@ internal class PuloonAdapter(
             if (hardware.site == GateSite.CHINA && GateModule.CHILD_SENSORS in hardware.modules) {
                 addAll(listOf(10, 20, 21, 22).map(::GateSensorId))
             }
-            if (hardware.isIndia() && GateModule.TOKEN_CONTROL_UNIT in hardware.modules) {
-                addAll(listOf(21, 22, 25, 26).map(::GateSensorId))
+            if (hardware.hasV28TokenControlUnit()) {
+                addAll(listOf(21, 22, 23, 24).map(::GateSensorId))
             }
         }
 
@@ -331,29 +382,42 @@ internal class PuloonAdapter(
     /** Returns whether India-specific GCU commands and fields are available. */
     private fun GateHardwareProfile.isIndia(): Boolean = site == GateSite.INDIA || site == GateSite.KOLKATA_INDIA
 
+    /** Returns whether the V2.8-only SectorDoor token sensor bank is physically available. */
+    private fun GateHardwareProfile.hasV28TokenControlUnit(): Boolean =
+        protocolRevision == GateProtocolRevision.V2_8 &&
+            isIndia() &&
+            mechanism == GateMechanism.SECTOR &&
+            GateModule.TOKEN_CONTROL_UNIT in modules
+
+    /** Rejects extension commands that were introduced after the V2.5 protocol. */
+    private fun requireV28(feature: String) {
+        require(hardware.protocolRevision == GateProtocolRevision.V2_8) {
+            "$feature requires Puloon protocol V2.8"
+        }
+    }
+
+    /** Requires the revision and site combination documented for standby configuration. */
+    private fun requireStandbySupport() {
+        requireV28("Standby configuration")
+        require(hardware.site == GateSite.KOLKATA_INDIA) {
+            "Standby configuration requires the Kolkata India profile"
+        }
+    }
+
     /** Maps the common enum ordinal to the documented offset mode byte (`0x30..0x3F`). */
     private fun GatePassMode.wireValue(): Char = (PASS_MODE_BASE + ordinal).toChar()
-
-    /** Encodes one unsigned value as two uppercase hexadecimal ASCII characters. */
-    private fun encodeAsciiHex(value: Int): ByteArray =
-        value
-            .toString(HEX_BASE)
-            .uppercase()
-            .padStart(2, '0')
-            .encodeToByteArray()
 
     private companion object {
         val VERSION_PATTERN = Regex("\\d{2}\\.\\d{2}")
         val STANDBY_SELECTOR = "2402".encodeToByteArray()
         val DOOR_TIMING_SELECTOR = "1102".encodeToByteArray()
         const val PASS_MODE_BASE = 0x30
-        const val MAX_SEQUENCE = 0xFFFF
+        const val MAX_SEQUENCE = 0xFF
         const val MAX_UNSIGNED_BYTE = 0xFF
         const val UPS_STEP_SECONDS = 10
         const val MAX_UPS_SECONDS = MAX_UNSIGNED_BYTE * UPS_STEP_SECONDS
         const val DOOR_DELAY_STEP_MILLISECONDS = 100L
         const val MAX_DOOR_DELAY_MILLISECONDS = 1_000L
-        const val HEX_BASE = 16
 
         val BASE_CAPABILITIES =
             setOf(
@@ -364,7 +428,6 @@ internal class PuloonAdapter(
                 GateCapability.PASS_MODE,
                 GateCapability.SAFETY_REGION,
                 GateCapability.SENSORS,
-                GateCapability.DOOR_TIMING,
                 GateCapability.SETTINGS,
             )
         val INDIA_CAPABILITIES =

@@ -49,6 +49,7 @@ internal class SerialGateController(
     private val mutableConnectionState = MutableStateFlow(GateConnectionState.DISCONNECTED)
     private val mutableEvents = MutableSharedFlow<GateEvent>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
     private val operationMutex = Mutex()
+    private val traceSequenceMutex = Mutex()
     private var traceSequence = 0L
     private var normalOpenMode = config.hardware.normalOpen
     private val session =
@@ -211,7 +212,14 @@ internal class SerialGateController(
 
     /** Delegates an explicitly enabled, non-retryable maintenance diagnostic. */
     override suspend fun runDiagnostic(diagnostic: GateDiagnostic): GateResult<Unit> =
-        acknowledge(GateOperation.Diagnostic(diagnostic), GateCapability.DIAGNOSTICS)
+        acknowledge(
+            GateOperation.Diagnostic(diagnostic),
+            if (diagnostic is GateDiagnostic.ReturnCupLamp) {
+                GateCapability.RETURN_CUP_DIAGNOSTIC
+            } else {
+                GateCapability.DIAGNOSTICS
+            },
+        )
 
     /** Delegates an explicitly enabled, non-retryable controller reset. */
     override suspend fun reset(): GateResult<Unit> = acknowledge(GateOperation.Reset, GateCapability.RESET)
@@ -253,9 +261,9 @@ internal class SerialGateController(
         successDetail: (T) -> String,
         block: suspend () -> GateResult<T>,
     ): GateResult<T> {
-        val sequence = ++traceSequence
+        val sequence = traceSequenceMutex.withLock { ++traceSequence }
         val started = TimeSource.Monotonic.markNow()
-        mutableEvents.emit(GateEvent.CommandSent(sequence, command, requestDetail, Clock.System.now()))
+        mutableEvents.tryEmit(GateEvent.CommandSent(sequence, command, requestDetail, Clock.System.now()))
         val result = block()
         val outcome =
             when (result) {
@@ -267,7 +275,7 @@ internal class SerialGateController(
                 is GateResult.Success -> successDetail(result.value)
                 is GateResult.Failure -> result.error.traceDetail()
             }
-        mutableEvents.emit(
+        mutableEvents.tryEmit(
             GateEvent.ResponseReceived(
                 sequence = sequence,
                 command = command,

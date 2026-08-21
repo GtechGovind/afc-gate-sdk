@@ -200,10 +200,34 @@ private fun SerialSettings(
     SettingsSection("Connection", "Serial transport and retry behavior") {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             OptionDropdown(
+                "Protocol revision",
+                configuration.protocolRevision,
+                {
+                    callbacks.onConfigurationChanged(
+                        configuration.copy(protocolRevision = it, hasUnsavedChanges = true),
+                    )
+                },
+                listOf(SelectionOption("V2_8", "Puloon V2.8"), SelectionOption("V2_5", "Puloon V2.5")),
+                Modifier.weight(1f),
+            )
+            OptionDropdown(
                 "Gate mechanism",
                 configuration.mechanism,
                 { callbacks.onConfigurationChanged(configuration.copy(mechanism = it, hasUnsavedChanges = true)) },
                 listOf(SelectionOption("SECTOR", "SectorDoor"), SelectionOption("SWING", "SwingDoor")),
+                Modifier.weight(1f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            OptionDropdown(
+                "Controller variant",
+                configuration.controllerVariant,
+                {
+                    callbacks.onConfigurationChanged(
+                        configuration.copy(controllerVariant = it, hasUnsavedChanges = true),
+                    )
+                },
+                listOf(SelectionOption("STANDARD", "Standard"), SelectionOption("BLDC", "BLDC SectorDoor")),
                 Modifier.weight(1f),
             )
             OptionDropdown(

@@ -51,7 +51,7 @@ internal interface SerialTransport {
     /** Current low-level transport state. */
     val state: StateFlow<SerialTransportState>
 
-    /** Opens [config], closing any prior port owned by this transport first. */
+    /** Opens [config], closing any prior port and discarding pending bytes from the previous session first. */
     suspend fun open(config: SerialConnectionConfig)
 
     /** Releases the current platform port and reader resources. */
@@ -101,7 +101,9 @@ internal class SerialSession(
     private var transportObserverJob: Job? = null
     private var reconnectJob: Job? = null
     private var monitoringJob: Job? = null
+    private var reconnectHandshake: (suspend () -> GateResult<*>)? = null
     private var intentionalDisconnect = true
+    private var hasEstablishedConnection = false
 
     /** Read-only common lifecycle state observed by the public controller. */
     val connectionState: StateFlow<GateConnectionState> = mutableConnectionState.asStateFlow()
@@ -109,13 +111,12 @@ internal class SerialSession(
     /** Opens the transport idempotently and starts receive/state observers. */
     suspend fun connect(): GateResult<Unit> =
         lifecycleMutex.withLock {
+            reconnectJob?.cancelAndJoin()
+            reconnectJob = null
             if (connectionState.value == GateConnectionState.CONNECTED) {
                 return@withLock GateResult.Success(Unit)
             }
-            reconnectJob?.cancelAndJoin()
-            reconnectJob = null
             intentionalDisconnect = false
-            startReceiver()
             startTransportObserver()
             updateConnectionState(GateConnectionState.CONNECTING)
             openTransport()
@@ -125,29 +126,34 @@ internal class SerialSession(
     suspend fun disconnect(): GateResult<Unit> =
         lifecycleMutex.withLock {
             intentionalDisconnect = true
+            hasEstablishedConnection = false
             reconnectJob?.cancelAndJoin()
             reconnectJob = null
             monitoringJob?.cancelAndJoin()
             monitoringJob = null
-            receiverJob?.cancelAndJoin()
-            receiverJob = null
-            transportObserverJob?.cancelAndJoin()
-            transportObserverJob = null
-            drainFrames()
-            try {
-                transport.close()
-                updateConnectionState(GateConnectionState.DISCONNECTED)
-                GateResult.Success(Unit)
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (error: Exception) {
-                updateConnectionState(GateConnectionState.FAILED)
-                GateResult.Failure(GateError.Transport(error.message ?: "Unable to close serial port"))
+            reconnectHandshake = null
+            commandMutex.withLock {
+                receiverJob?.cancelAndJoin()
+                receiverJob = null
+                transportObserverJob?.cancelAndJoin()
+                transportObserverJob = null
+                drainFrames()
+                try {
+                    transport.close()
+                    updateConnectionState(GateConnectionState.DISCONNECTED)
+                    GateResult.Success(Unit)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (error: Exception) {
+                    updateConnectionState(GateConnectionState.FAILED)
+                    GateResult.Failure(GateError.Transport(error.message ?: "Unable to close serial port"))
+                }
             }
         }
 
     /** Starts or replaces periodic monitoring using the configured interval. */
-    fun startMonitoring(block: suspend () -> Unit) {
+    fun startMonitoring(block: suspend () -> GateResult<*>) {
+        reconnectHandshake = block
         val interval = runtime.statusPollInterval ?: return
         monitoringJob?.cancel()
         monitoringJob =
@@ -192,19 +198,23 @@ internal class SerialSession(
             GateResult.Failure(GateError.Timeout(transaction.operationName))
         }
 
-    /** Resets protocol state and opens the platform transport, scheduling recovery on failure. */
+    /** Resets protocol state and opens the transport; only a previously established session may auto-recover. */
     private suspend fun openTransport(): GateResult<Unit> =
         try {
+            receiverJob?.cancelAndJoin()
+            receiverJob = null
+            transport.open(serialConfig)
             decoder.reset()
             drainFrames()
-            transport.open(serialConfig)
+            startReceiver()
+            hasEstablishedConnection = true
             updateConnectionState(GateConnectionState.CONNECTED)
             GateResult.Success(Unit)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
             updateConnectionState(GateConnectionState.FAILED)
-            scheduleReconnect()
+            if (hasEstablishedConnection) scheduleReconnect()
             GateResult.Failure(GateError.Transport(error.message ?: "Unable to open serial port"))
         }
 
@@ -276,7 +286,7 @@ internal class SerialSession(
     /** Launches at most one bounded-backoff reconnect loop. */
     private suspend fun scheduleReconnect() {
         reconnectMutex.withLock {
-            if (intentionalDisconnect || reconnectJob?.isActive == true) return
+            if (intentionalDisconnect || !hasEstablishedConnection || reconnectJob?.isActive == true) return
             val policy = runtime.reconnectPolicy
             if (policy is ReconnectPolicy.Disabled) return
             check(policy is ReconnectPolicy.ExponentialBackoff)
@@ -290,10 +300,26 @@ internal class SerialSession(
                         eventSink(GateEvent.ReconnectAttempt(attempt))
                         delay(wait)
                         val result = openTransport()
-                        if (result is GateResult.Success) return@launch
+                        if (result is GateResult.Success) {
+                            val handshake = reconnectHandshake
+                            if (handshake == null || handshake() is GateResult.Success) return@launch
+                            updateConnectionState(GateConnectionState.RECONNECTING)
+                            closeAfterFailedHandshake()
+                        }
                         wait = nextDelay(wait, policy)
                     }
                 }
+        }
+    }
+
+    /** Closes a transport that reopened but failed the controller-status handshake before another retry. */
+    private suspend fun closeAfterFailedHandshake() {
+        try {
+            transport.close()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            eventSink(GateEvent.ProtocolWarning("Unable to close transport after failed reconnect handshake: ${error.message}"))
         }
     }
 

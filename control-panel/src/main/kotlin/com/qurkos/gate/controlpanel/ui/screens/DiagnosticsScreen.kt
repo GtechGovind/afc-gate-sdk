@@ -16,12 +16,17 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -29,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.qurkos.gate.controlpanel.ui.components.PageTitle
 import com.qurkos.gate.controlpanel.ui.components.PanelCard
+import com.qurkos.gate.controlpanel.ui.components.SafetyHoldButton
 import com.qurkos.gate.controlpanel.ui.model.ConnectionHealth
 import com.qurkos.gate.controlpanel.ui.model.ControlPanelCallbacks
 import com.qurkos.gate.controlpanel.ui.model.ControlPanelUiState
@@ -44,6 +50,7 @@ internal fun DiagnosticsScreen(
 ) {
     val connected = state.connectionHealth == ConnectionHealth.CONNECTED
     val maintenanceEnabled = state.configuration.maintenanceOperationsEnabled
+    var pendingProtectedTest by remember { mutableStateOf<DiagnosticTestUi?>(null) }
     Column(modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         PageTitle("Diagnostics", "Read controller health or run protected maintenance operations") {
             Button(
@@ -55,7 +62,7 @@ internal fun DiagnosticsScreen(
                         state.diagnostics.none { it.state == DiagnosticState.RUNNING },
             ) {
                 Icon(Icons.Outlined.PlayArrow, null)
-                Text("Run all", Modifier.padding(start = 8.dp))
+                Text("Run read-only", Modifier.padding(start = 8.dp))
             }
         }
         DiagnosticNotice(connected = connected, maintenanceEnabled = maintenanceEnabled)
@@ -72,10 +79,36 @@ internal fun DiagnosticsScreen(
                         connected &&
                             !state.commandInProgress &&
                             (!test.requiresMaintenance || maintenanceEnabled),
-                    onRun = { callbacks.onDiagnosticRun(test.id) },
+                    onRun = {
+                        if (test.requiresHold) pendingProtectedTest = test else callbacks.onDiagnosticRun(test.id)
+                    },
                 )
             }
         }
+    }
+    pendingProtectedTest?.let { test ->
+        AlertDialog(
+            onDismissRequest = { pendingProtectedTest = null },
+            title = { Text(test.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("This operation changes physical gate state. Keep the gate clear before continuing.")
+                    SafetyHoldButton(
+                        label = test.title,
+                        holdProgress = 0f,
+                        enabled = connected && !state.commandInProgress,
+                        onHoldCompleted = {
+                            pendingProtectedTest = null
+                            callbacks.onDiagnosticRun(test.id)
+                        },
+                    )
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                OutlinedButton(onClick = { pendingProtectedTest = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 

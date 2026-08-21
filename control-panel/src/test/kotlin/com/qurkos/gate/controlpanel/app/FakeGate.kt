@@ -35,6 +35,7 @@ import kotlin.time.Instant
 /** In-memory [Gate] used to prove that the control panel routes only through the physical SDK contract. */
 internal class FakeGate(
     private val connectResult: GateResult<Unit> = GateResult.Success(Unit),
+    var passModeResult: GateResult<Unit> = GateResult.Success(Unit),
 ) : Gate {
     override val descriptor = GateDescriptor(GateVendor.PULOON, GateMechanism.SECTOR, GateSite.GENERIC)
     override val capabilities: Set<GateCapability> = GateCapability.entries.toSet()
@@ -108,7 +109,7 @@ internal class FakeGate(
 
     override suspend fun setPassMode(mode: GatePassMode): GateResult<Unit> {
         passModes += mode
-        return GateResult.Success(Unit)
+        return passModeResult
     }
 
     override suspend fun setSafetyRegion(region: GateSafetyRegion): GateResult<Unit> {
@@ -139,7 +140,7 @@ internal class FakeGate(
     }
 
     override suspend fun readStandbyPolicy(): GateResult<GateStandbyPolicy> =
-        GateResult.Success(GateStandbyPolicy(300.seconds, GatePassMode.OUT_OF_SERVICE))
+        GateResult.Success(GateStandbyPolicy(255.seconds, GatePassMode.OUT_OF_SERVICE))
 
     override suspend fun setStandbyPolicy(policy: GateStandbyPolicy): GateResult<Unit> {
         standbyWrites += policy

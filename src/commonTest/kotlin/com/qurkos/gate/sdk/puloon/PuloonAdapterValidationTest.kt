@@ -49,13 +49,19 @@ class PuloonAdapterValidationTest {
         )
         assertSuccess(
             adapter.transaction(
-                GateOperation.SetStandbyPolicy(GateStandbyPolicy(255.seconds, GatePassMode.CONTROLLED_BOTH)),
+                GateOperation.SetStandbyPolicy(
+                    GateStandbyPolicy(255.seconds, GatePassMode.CONTROLLED_BOTH),
+                    normalOpen = false,
+                ),
             ),
         )
         val outOfServiceStandby =
             assertSuccess(
                 adapter.transaction(
-                    GateOperation.SetStandbyPolicy(GateStandbyPolicy(20.seconds, GatePassMode.OUT_OF_SERVICE)),
+                    GateOperation.SetStandbyPolicy(
+                        GateStandbyPolicy(20.seconds, GatePassMode.OUT_OF_SERVICE),
+                        normalOpen = false,
+                    ),
                 ),
             )
         val standbyModeByte =
@@ -67,7 +73,18 @@ class PuloonAdapterValidationTest {
         assertEquals(0x3F, standbyModeByte)
         assertFailure(
             adapter.transaction(
-                GateOperation.SetStandbyPolicy(GateStandbyPolicy(256.seconds, GatePassMode.CONTROLLED_BOTH)),
+                GateOperation.SetStandbyPolicy(
+                    GateStandbyPolicy(256.seconds, GatePassMode.CONTROLLED_BOTH),
+                    normalOpen = false,
+                ),
+            ),
+        )
+        assertFailure(
+            adapter.transaction(
+                GateOperation.SetStandbyPolicy(
+                    GateStandbyPolicy(20.seconds, GatePassMode.FREE_ENTRY_LOCKED_EXIT_NORMAL_OPEN),
+                    normalOpen = false,
+                ),
             ),
         )
     }

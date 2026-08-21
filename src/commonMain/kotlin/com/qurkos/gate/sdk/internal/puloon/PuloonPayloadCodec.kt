@@ -50,24 +50,59 @@ internal object PuloonPayloadCodec {
     fun decodeStatus(
         bytes: ByteArray,
         hardware: GateHardwareProfile,
+    ): GateStatus =
+        try {
+            decodeStatusPayload(bytes, hardware)
+        } catch (error: IllegalArgumentException) {
+            throw IllegalArgumentException(
+                "${error.message ?: "Invalid Puloon status payload"}; " +
+                    "length=${bytes.size}; payloadHex=${bytes.toHexString()}",
+                error,
+            )
+        }
+
+    @Suppress("CyclomaticComplexMethod") // A fixed status record is decoded atomically before publication.
+    private fun decodeStatusPayload(
+        bytes: ByteArray,
+        hardware: GateHardwareProfile,
     ): GateStatus {
-        require(bytes.size >= STATUS_BASE_LENGTH) { "Puloon status payload is too short" }
-        val emergency =
-            when (bytes[EMERGENCY_OFFSET].toInt().toChar()) {
-                '0' -> GateEmergencyState.INACTIVE
-                '1' -> GateEmergencyState.ECU
-                '2' -> GateEmergencyState.TWENTY_FOUR_VOLT
-                '3' -> GateEmergencyState.BOTH
-                else -> GateEmergencyState.UNKNOWN
+        val expectedLength =
+            STATUS_BASE_LENGTH +
+                (if (GateModule.UPS in hardware.modules) UPS_STATUS_LENGTH else 0) +
+                (if (GateModule.TOKEN_CONTROL_UNIT in hardware.modules) TOKEN_STATUS_LENGTH else 0)
+        require(bytes.size == expectedLength) {
+            "Puloon status payload length ${bytes.size} does not match the configured hardware profile; " +
+                "expected $expectedLength"
+        }
+        val emergency = decodeEmergency(bytes[EMERGENCY_OFFSET])
+        val sensorFault =
+            when (bytes[SENSOR_FAULT_OFFSET].toInt().toChar()) {
+                '0' -> false
+                '1', '2' -> true
+                else -> throw invalidStatusField("sensor error", SENSOR_FAULT_OFFSET, bytes[SENSOR_FAULT_OFFSET], "0x30..0x32")
             }
         val power =
-            if (GateModule.UPS in hardware.modules && bytes.size >= STATUS_BASE_LENGTH + UPS_STATUS_LENGTH) {
+            if (GateModule.UPS in hardware.modules) {
+                val onlineByte = bytes[STATUS_BASE_LENGTH].toInt() and MAX_UNSIGNED_BYTE
+                val batteryByte = bytes[STATUS_BASE_LENGTH + 1].toInt() and MAX_UNSIGNED_BYTE
+                require(onlineByte == 0 || onlineByte == UPS_ONLINE_MASK) {
+                    invalidStatusFieldMessage("UPS online", STATUS_BASE_LENGTH, bytes[STATUS_BASE_LENGTH], "0x00 or 0x08")
+                }
+                require(batteryByte == 0 || batteryByte == UPS_BATTERY_MASK) {
+                    invalidStatusFieldMessage("UPS battery", STATUS_BASE_LENGTH + 1, bytes[STATUS_BASE_LENGTH + 1], "0x00 or 0x01")
+                }
                 val chargeText = bytes.copyOfRange(STATUS_BASE_LENGTH + 2, STATUS_BASE_LENGTH + 4).decodeToString()
-                val charge = if (chargeText == "FF") null else chargeText.toIntOrNull()?.also { require(it in 0..99) }
+                val charge =
+                    if (chargeText == "FF") {
+                        null
+                    } else {
+                        chargeText.toIntOrNull()?.also { require(it in 0..99) { "Invalid Puloon UPS charge at offsets 25..26" } }
+                            ?: throw IllegalArgumentException("Invalid Puloon UPS charge at offsets 25..26")
+                    }
                 GatePowerStatus(
                     upsPresent = true,
-                    online = bytes[STATUS_BASE_LENGTH].toInt() and UPS_ONLINE_MASK != 0,
-                    onBattery = bytes[STATUS_BASE_LENGTH + 1].toInt() and UPS_BATTERY_MASK != 0,
+                    online = onlineByte == UPS_ONLINE_MASK,
+                    onBattery = batteryByte == UPS_BATTERY_MASK,
                     chargePercent = charge,
                     summary = charge?.let { "$it%" } ?: "Unknown charge",
                 )
@@ -75,24 +110,28 @@ internal object PuloonPayloadCodec {
                 null
             }
         val tokenOffset = STATUS_BASE_LENGTH + if (power == null) 0 else UPS_STATUS_LENGTH
-        val hasTokenData = GateModule.TOKEN_CONTROL_UNIT in hardware.modules && bytes.size >= tokenOffset + TOKEN_STATUS_LENGTH
+        val hasTokenData = GateModule.TOKEN_CONTROL_UNIT in hardware.modules
+        val returnCupValue = if (hasTokenData) decodeDecimal(bytes, tokenOffset + 4, 2, "return-cup state") else null
+        require(returnCupValue == null || returnCupValue in 0..1) {
+            "Puloon return-cup state at offsets ${tokenOffset + 4}..${tokenOffset + 5} must be 00 or 01"
+        }
         return GateStatus(
             passMode = decodePassMode(bytes[0]),
-            entryCount = decodeDecimal(bytes, 1, 2),
-            exitCount = decodeDecimal(bytes, 3, 2),
+            entryCount = decodeDecimal(bytes, 1, 2, "entry count"),
+            exitCount = decodeDecimal(bytes, 3, 2, "exit count"),
             emergency = emergency,
-            sensors = GateSensorStatus(emptySet(), bytes[SENSOR_FAULT_OFFSET] != ascii('0')),
+            sensors = GateSensorStatus(emptySet(), sensorFault),
             power = power,
             passageResult = decodePassageResult(bytes[5]),
             entryError = decodePassageError(bytes[6]),
             exitError = decodePassageError(bytes[7]),
             doorFaults = decodeDoorFaults(bytes[8]),
             occupiedZones = decodeOccupancy(bytes[9]),
-            switches = decodeBitFields(bytes, offset = 10, byteCount = 3, base = 0x40),
-            inputs = decodeBitFields(bytes, offset = 13, byteCount = 8, base = 0x30),
-            tokenPathACount = if (hasTokenData) decodeDecimal(bytes, tokenOffset, 2) else null,
-            tokenPathBCount = if (hasTokenData) decodeDecimal(bytes, tokenOffset + 2, 2) else null,
-            returnCupOccupied = if (hasTokenData) decodeDecimal(bytes, tokenOffset + 4, 2) == 1 else null,
+            switches = decodeBitFields(bytes, offset = 10, byteCount = 3, base = 0x40, name = "switch status"),
+            inputs = decodeBitFields(bytes, offset = 13, byteCount = 8, base = 0x30, name = "input status"),
+            tokenPathACount = if (hasTokenData) decodeDecimal(bytes, tokenOffset, 2, "token path A count") else null,
+            tokenPathBCount = if (hasTokenData) decodeDecimal(bytes, tokenOffset + 2, 2, "token path B count") else null,
+            returnCupOccupied = returnCupValue?.let { it == 1 },
             observedAt = Clock.System.now(),
         )
     }
@@ -106,7 +145,7 @@ internal object PuloonPayloadCodec {
         val active = mutableSetOf<GateSensorId>()
         val faulted = mutableSetOf<GateSensorId>()
         bytes.take(SENSOR_BITMAP_LENGTH).forEachIndexed { index, byte ->
-            val nibble = decodeOffsetNibble(byte, 0x30, "sensor")
+            val nibble = decodeOffsetNibble(byte, 0x30, "sensor", index)
             val childSensorsDisabled =
                 index == 5 && hardware.site == GateSite.CHINA && byte == 0x3F.toByte()
             if (!childSensorsDisabled) {
@@ -116,7 +155,7 @@ internal object PuloonPayloadCodec {
             }
         }
         bytes.copyOfRange(SENSOR_BITMAP_LENGTH, SENSOR_TEXT_LENGTH).forEachIndexed { index, byte ->
-            val nibble = decodeOffsetNibble(byte, 0x30, "sensor error")
+            val nibble = decodeOffsetNibble(byte, 0x30, "sensor error", SENSOR_BITMAP_LENGTH + index)
             repeat(BITS_PER_NIBBLE) { bit ->
                 if (nibble and (1 shl bit) != 0) sensorId(index, bit, hardware)?.let(faulted::add)
             }
@@ -141,6 +180,9 @@ internal object PuloonPayloadCodec {
     fun decodeClock(bytes: ByteArray): GateClock {
         val text = bytes.decodeToString()
         require(text.all(Char::isDigit)) { "Puloon clock payload must contain only decimal digits" }
+        if (text.length == CLOCK_TEXT_LENGTH + 1) {
+            require(text.first() == '1') { "Puloon clock read response must use selector 1" }
+        }
         val value = if (text.length == CLOCK_TEXT_LENGTH + 1) text.drop(1) else text
         require(value.length == CLOCK_TEXT_LENGTH) { "Puloon clock payload must contain exactly 12 clock digits" }
         return GateClock(
@@ -157,7 +199,12 @@ internal object PuloonPayloadCodec {
 
     /** Decodes the selected extension block for standby timeout and target mode. */
     fun decodeStandby(bytes: ByteArray): GateStandbyPolicy {
-        require(bytes.size >= STANDBY_RESPONSE_LENGTH) { "Puloon standby payload is too short" }
+        require(bytes.size == STANDBY_RESPONSE_LENGTH) {
+            "Puloon standby payload must contain exactly $STANDBY_RESPONSE_LENGTH bytes"
+        }
+        require(bytes[0] == ascii('1') && bytes[3] == ascii('3')) {
+            "Puloon standby read response contains invalid selectors"
+        }
         return GateStandbyPolicy(
             timeout = decodeOffsetHexByte(bytes[1], bytes[2]).seconds,
             passMode = decodePassMode(bytes[4]),
@@ -166,7 +213,10 @@ internal object PuloonPayloadCodec {
 
     /** Decodes the selected extension block for door opening/closing timing. */
     fun decodeDoorTiming(bytes: ByteArray): GateDoorTiming {
-        require(bytes.size >= DOOR_TIMING_RESPONSE_LENGTH) { "Puloon door timing payload is too short" }
+        require(bytes.size == DOOR_TIMING_RESPONSE_LENGTH) {
+            "Puloon door timing payload must contain exactly $DOOR_TIMING_RESPONSE_LENGTH bytes"
+        }
+        require(bytes[0] == ascii('1')) { "Puloon door timing read response must use selector 1" }
         return GateDoorTiming(
             openingDelay = (decodeOffsetHexByte(bytes[1], bytes[2]) * DELAY_STEP_MILLISECONDS).milliseconds,
             closingDelay = (decodeOffsetHexByte(bytes[3], bytes[4]) * DELAY_STEP_MILLISECONDS).milliseconds,
@@ -263,7 +313,7 @@ internal object PuloonPayloadCodec {
             '8' -> GatePassageResult.EXIT_TAILGATE_USED
             '9' -> GatePassageResult.ENTRY_WRONG_WAY_USED
             '@' -> GatePassageResult.EXIT_WRONG_WAY_USED
-            else -> GatePassageResult.UNKNOWN
+            else -> throw invalidStatusField("passage result", 5, byte, "0x30..0x39 or 0x40")
         }
 
     private fun decodePassageError(byte: Byte): GatePassageError =
@@ -272,11 +322,13 @@ internal object PuloonPayloadCodec {
             '3' -> GatePassageError.PIGGY_TAILING
             '5' -> GatePassageError.INTRUSION
             '9' -> GatePassageError.WRONG_WAY_FRAUD
-            else -> GatePassageError.UNKNOWN
+            else -> throw IllegalArgumentException(
+                "Invalid Puloon passage error value ${byte.hexByte()}; expected 0x30, 0x33, 0x35, or 0x39",
+            )
         }
 
     private fun decodeDoorFaults(byte: Byte): Set<GateDoorFault> {
-        val mask = decodeOffsetNibble(byte, 0x40, "door error")
+        val mask = decodeOffsetNibble(byte, 0x40, "door error", 8)
         return buildSet {
             if (mask and 0x01 != 0) add(GateDoorFault.DOOR_1_OPEN)
             if (mask and 0x02 != 0) add(GateDoorFault.DOOR_1_CLOSE)
@@ -287,7 +339,9 @@ internal object PuloonPayloadCodec {
 
     private fun decodeOccupancy(byte: Byte): Set<GateOccupancyZone> {
         val mask = (byte.toInt() and MAX_UNSIGNED_BYTE) - 0x80
-        require(mask in 0..0x7F) { "Invalid Puloon gate inner-state value" }
+        require(mask in 0..0x7F) {
+            invalidStatusFieldMessage("gate inner state", 9, byte, "0x80..0xFF")
+        }
         return GateOccupancyZone.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
     }
 
@@ -296,10 +350,12 @@ internal object PuloonPayloadCodec {
         offset: Int,
         byteCount: Int,
         base: Int,
+        name: String,
     ): Map<Int, Boolean> =
         buildMap {
             repeat(byteCount) { byteIndex ->
-                val mask = decodeOffsetNibble(bytes[offset + byteIndex], base, "status bitmap")
+                val absoluteOffset = offset + byteIndex
+                val mask = decodeOffsetNibble(bytes[absoluteOffset], base, name, absoluteOffset)
                 repeat(BITS_PER_NIBBLE) { bit ->
                     put(byteIndex * BITS_PER_NIBBLE + bit + 1, mask and (1 shl bit) != 0)
                 }
@@ -310,29 +366,45 @@ internal object PuloonPayloadCodec {
         byte: Byte,
         base: Int,
         name: String,
+        offset: Int? = null,
     ): Int {
         val value = byte.toInt() and MAX_UNSIGNED_BYTE
         val decoded = value - base
-        require(decoded in 0 until HEX_BASE) { "Invalid Puloon $name value" }
+        require(decoded in 0 until HEX_BASE) {
+            val location = offset?.let { " at payload offset $it" }.orEmpty()
+            "Invalid Puloon $name$location: actual ${byte.hexByte()}, expected ${base.hexInt()}..${(base + 0x0F).hexInt()}"
+        }
         return decoded
     }
+
+    private fun decodeEmergency(byte: Byte): GateEmergencyState =
+        when (byte.toInt().toChar()) {
+            '0' -> GateEmergencyState.INACTIVE
+            '1' -> GateEmergencyState.ECU
+            '2' -> GateEmergencyState.TWENTY_FOUR_VOLT
+            '3' -> GateEmergencyState.BOTH
+            else -> throw invalidStatusField("emergency state", EMERGENCY_OFFSET, byte, "0x30..0x33")
+        }
 
     /** Resolves the documented offset mode byte (`0x30..0x3F`) to the common mode. */
     private fun decodePassMode(byte: Byte): GatePassMode =
         PASS_MODES.getOrNull((byte.toInt() and MAX_UNSIGNED_BYTE) - PASS_MODE_BASE)
-            ?: throw IllegalArgumentException("Unknown Puloon pass mode")
+            ?: throw invalidStatusField("pass mode", 0, byte, "0x30..0x3F")
 
     /** Strictly decodes a fixed-width decimal slice. */
     private fun decodeDecimal(
         bytes: ByteArray,
         offset: Int,
         length: Int,
+        name: String = "decimal value",
     ): Int =
         bytes
             .copyOfRange(offset, offset + length)
             .decodeToString()
             .toIntOrNull()
-            ?: throw IllegalArgumentException("Invalid Puloon decimal value")
+            ?: throw IllegalArgumentException(
+                "Invalid Puloon $name at payload offsets $offset..${offset + length - 1}",
+            )
 
     /** Strictly decodes two offset-hex nibbles. */
     private fun decodeOffsetHexByte(
@@ -349,6 +421,26 @@ internal object PuloonPayloadCodec {
 
     /** Returns whether India-specific payload fields are enabled. */
     private fun GateHardwareProfile.isIndia(): Boolean = site == GateSite.INDIA || site == GateSite.KOLKATA_INDIA
+
+    private fun invalidStatusField(
+        name: String,
+        offset: Int,
+        actual: Byte,
+        expected: String,
+    ): IllegalArgumentException = IllegalArgumentException(invalidStatusFieldMessage(name, offset, actual, expected))
+
+    private fun invalidStatusFieldMessage(
+        name: String,
+        offset: Int,
+        actual: Byte,
+        expected: String,
+    ): String = "Invalid Puloon $name at payload offset $offset: actual ${actual.hexByte()}, expected $expected"
+
+    private fun ByteArray.toHexString(): String = joinToString(" ") { it.hexByte() }
+
+    private fun Byte.hexByte(): String = (toInt() and MAX_UNSIGNED_BYTE).hexInt()
+
+    private fun Int.hexInt(): String = "0x${toString(HEX_BASE).uppercase().padStart(2, '0')}"
 
     /** Appends a two-character zero-padded decimal component. */
     private fun StringBuilder.appendPadded(value: Int) {

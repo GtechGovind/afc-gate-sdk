@@ -120,7 +120,13 @@ internal class PuloonAdapter(
                 read('U', byteArrayOf(ascii('1')) + STANDBY_SELECTOR) { data ->
                     GateResponse.StandbyPolicy(PuloonPayloadCodec.decodeStandby(data))
                 }
-            is GateOperation.SetStandbyPolicy -> write('U', encodeStandby(operation.policy))
+            is GateOperation.SetStandbyPolicy -> {
+                require(isPassModeSupported(operation.policy.passMode, operation.normalOpen)) {
+                    "Standby pass mode ${operation.policy.passMode} is unsupported for ${hardware.mechanism}, " +
+                        "${hardware.site}, normalOpen=${operation.normalOpen}"
+                }
+                write('U', encodeStandby(operation.policy))
+            }
             GateOperation.ReadDoorTiming ->
                 read('U', byteArrayOf(ascii('1')) + DOOR_TIMING_SELECTOR) { data ->
                     GateResponse.DoorTiming(PuloonPayloadCodec.decodeDoorTiming(data))

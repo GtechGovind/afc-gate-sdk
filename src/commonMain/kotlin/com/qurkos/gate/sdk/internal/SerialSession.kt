@@ -181,6 +181,13 @@ internal class SerialSession(
                 if (response != null) {
                     return@withLock transaction.decode(response)
                 }
+                val nextAction = if (attempt + 1 < attempts) "retry" else "fail"
+                eventSink(
+                    GateEvent.ProtocolWarning(
+                        "Response timeout operation=${transaction.operationName} attempt=${attempt + 1}/$attempts " +
+                            "timeoutMs=${runtime.responseTimeout.inWholeMilliseconds} nextAction=$nextAction",
+                    ),
+                )
             }
             GateResult.Failure(GateError.Timeout(transaction.operationName))
         }
@@ -220,6 +227,14 @@ internal class SerialSession(
             var frame: ProtocolFrame
             do {
                 frame = frames.receive()
+                if (!transaction.matches(frame)) {
+                    eventSink(
+                        GateEvent.ProtocolWarning(
+                            "Discarded uncorrelated response while waiting for ${transaction.operationName}; " +
+                                frame.diagnosticSummary,
+                        ),
+                    )
+                }
             } while (!transaction.matches(frame))
             frame
         }

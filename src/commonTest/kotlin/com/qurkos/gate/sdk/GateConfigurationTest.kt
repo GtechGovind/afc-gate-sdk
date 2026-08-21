@@ -61,4 +61,23 @@ class GateConfigurationTest {
 
         assertTrue(GateCapability.UPS_SHUTDOWN in gate.capabilities)
     }
+
+    @Test
+    fun factoryAndSupportRejectPuloonProfileCombinationsMissingFromV28() {
+        val serial = SerialConnectionConfig(SerialPortName("fake"))
+        val invalidProfiles =
+            listOf(
+                GateHardwareProfile(mechanism = GateMechanism.FLAP),
+                GateHardwareProfile(mechanism = GateMechanism.SWING, normalOpen = true),
+                GateHardwareProfile(site = GateSite.GENERIC, modules = setOf(GateModule.UPS)),
+                GateHardwareProfile(site = GateSite.CHINA, modules = setOf(GateModule.TOKEN_CONTROL_UNIT)),
+                GateHardwareProfile(site = GateSite.INDIA, modules = setOf(GateModule.CHILD_SENSORS)),
+            )
+
+        invalidProfiles.forEach { hardware ->
+            val config = GateDeviceConfig(GateVendor.PULOON, serial, hardware)
+            assertIs<GateResult.Failure>(GateSdk.create(config))
+            assertIs<GateResult.Failure>(GateSdk.support(config))
+        }
+    }
 }

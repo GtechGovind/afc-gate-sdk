@@ -1,5 +1,6 @@
 import dev.detekt.gradle.extensions.FailOnSeverity
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
+import org.gradle.api.tasks.bundling.Jar
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -119,4 +120,8 @@ detekt {
 tasks.withType<AbstractArchiveTask>().configureEach {
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
+}
+
+tasks.withType<Jar>().configureEach {
+    manifest.attributes["Implementation-Version"] = project.version.toString()
 }

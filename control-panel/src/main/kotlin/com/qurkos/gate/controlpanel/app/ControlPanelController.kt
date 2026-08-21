@@ -31,6 +31,7 @@ import com.qurkos.gate.sdk.GateDirection
 import com.qurkos.gate.sdk.GateDoorTestAction
 import com.qurkos.gate.sdk.GateDoorTiming
 import com.qurkos.gate.sdk.GateError
+import com.qurkos.gate.sdk.GateEvent
 import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateLampColor
 import com.qurkos.gate.sdk.GateMechanism
@@ -100,6 +101,9 @@ class ControlPanelController(
     private var motionJob: Job? = null
     private var eventSequence = 0L
     private var savedConfiguration = GateConfigurationUi()
+    private var lastLoggedStatus: String? = null
+    private var lastLoggedSensors: String? = null
+    private var lastLoggedSupport: String? = null
 
     /** Immutable presentation state consumed by Compose. */
     val state: StateFlow<ControlPanelUiState> = mutableState.asStateFlow()
@@ -185,6 +189,8 @@ class ControlPanelController(
     override fun onConnect() {
         if (hardwareGate != null) return
         val gate = createGate(mutableState.value.configuration) ?: return
+        lastLoggedStatus = null
+        lastLoggedSensors = null
         hardwareGate = gate
         observe(gate)
         mutableState.update { it.copy(commandInProgress = true, transientMessage = null) }
@@ -249,7 +255,15 @@ class ControlPanelController(
 
     override fun onRefreshSerialPorts() {
         when (val result = serialPortProvider()) {
-            is GateResult.Success ->
+            is GateResult.Success -> {
+                logger.info(
+                    "serialDiscovery count=${result.value.size} ports=" +
+                        result.value
+                            .map { "${it.name.value}:${it.description.orEmpty()}" }
+                            .sorted()
+                            .toString()
+                            .logValue(),
+                )
                 mutableState.update { state ->
                     state.copy(
                         availableSerialPorts =
@@ -259,14 +273,17 @@ class ControlPanelController(
                         serialPortDiscoveryError = null,
                     )
                 }
+            }
 
-            is GateResult.Failure ->
+            is GateResult.Failure -> {
+                logger.warning("serialDiscovery failed detail=${result.error.displayMessage().logValue()}")
                 mutableState.update {
                     it.copy(
                         availableSerialPorts = emptyList(),
                         serialPortDiscoveryError = result.error.displayMessage(),
                     )
                 }
+            }
         }
     }
 
@@ -680,9 +697,18 @@ class ControlPanelController(
                     ),
                 maintenanceOperationsEnabled = configuration.maintenanceOperationsEnabled,
             )
+        logger.info(config.diagnosticLogMessage())
         return when (val result = gateFactory(config)) {
-            is GateResult.Success -> result.value
+            is GateResult.Success -> {
+                logger.info(
+                    "gateCreated vendor=${result.value.descriptor.vendor.name} " +
+                        "mechanism=${result.value.descriptor.mechanism.name} site=${result.value.descriptor.site.name} " +
+                        "capabilities=${result.value.capabilities.map { it.name }.sorted()}",
+                )
+                result.value
+            }
             is GateResult.Failure -> {
+                logger.warning("gateCreation failed detail=${result.error.displayMessage().logValue()}")
                 showMessage(result.error.displayMessage())
                 null
             }
@@ -701,6 +727,11 @@ class ControlPanelController(
         when (val result = supportProvider(config)) {
             is GateResult.Success -> {
                 val support = result.value
+                val supportDiagnostic = support.diagnosticLogMessage()
+                if (supportDiagnostic != lastLoggedSupport) {
+                    lastLoggedSupport = supportDiagnostic
+                    logger.fine(supportDiagnostic)
+                }
                 mutableState.update { current ->
                     val passageMode =
                         current.configuration.passageMode
@@ -739,7 +770,8 @@ class ControlPanelController(
                 }
             }
 
-            is GateResult.Failure ->
+            is GateResult.Failure -> {
+                logger.warning("gateSupport failed detail=${result.error.displayMessage().logValue()}")
                 mutableState.update {
                     it.copy(
                         supportedCapabilities = emptySet(),
@@ -749,6 +781,7 @@ class ControlPanelController(
                         transientMessage = result.error.displayMessage(),
                     )
                 }
+            }
         }
     }
 
@@ -773,7 +806,14 @@ class ControlPanelController(
                             mutableState.update { it.withHardwareStatus(status) }
                             if (GateCapability.SENSORS in gate.capabilities) {
                                 when (val result = gate.readSensors()) {
-                                    is GateResult.Success -> mutableState.update { it.withSensorStatus(result.value) }
+                                    is GateResult.Success -> {
+                                        val sensorDiagnostic = result.value.diagnosticLogMessage()
+                                        if (sensorDiagnostic != lastLoggedSensors) {
+                                            lastLoggedSensors = sensorDiagnostic
+                                            logger.fine(sensorDiagnostic)
+                                        }
+                                        mutableState.update { it.withSensorStatus(result.value) }
+                                    }
                                     is GateResult.Failure -> Unit
                                 }
                             }
@@ -782,6 +822,15 @@ class ControlPanelController(
                 }
                 launch {
                     gate.events.collectLatest { sdkEvent ->
+                        if (sdkEvent is GateEvent.StatusChanged) {
+                            val statusDiagnostic = sdkEvent.status.diagnosticLogMessage()
+                            if (statusDiagnostic != lastLoggedStatus) {
+                                lastLoggedStatus = statusDiagnostic
+                                runCatching { logger.sdkEvent(sdkEvent) }
+                            }
+                        } else {
+                            runCatching { logger.sdkEvent(sdkEvent) }
+                        }
                         val traffic = sdkEvent.toTrafficUi() ?: return@collectLatest
                         runCatching { logger.traffic(traffic) }
                         mutableState.update { it.appendTraffic(traffic) }
@@ -807,6 +856,8 @@ class ControlPanelController(
     private fun disconnectHardware() {
         val gate = hardwareGate ?: return
         hardwareGate = null
+        lastLoggedStatus = null
+        lastLoggedSensors = null
         hardwareObservers?.cancel()
         hardwareObservers = null
         motionJob?.cancel()

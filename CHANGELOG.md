@@ -2,6 +2,24 @@
 
 All notable changes are recorded here. The project follows semantic versioning.
 
+## 1.0.3 - 2026-08-21
+
+- Audited every V2.8 Puloon command, response, field offset, numeric representation, profile restriction, and documented
+  error code against the SDK implementation.
+- Added actionable rejected-status diagnostics with the exact field, payload offset, received byte, expected range,
+  payload length, and full hexadecimal status block.
+- Added deep bounded diagnostic logs for runtime identity, port discovery, hardware/serial configuration, resolved support,
+  lifecycle and reconnect transitions, changed status snapshots, read-attempt timeouts, uncorrelated responses, and
+  malformed-frame metadata/hex.
+- Enforced profile-exact base, UPS, and TCU status lengths and validated emergency, sensor-error, UPS state/charge, token
+  counters, and return-cup fields before publishing status.
+- Rejected undocumented Puloon hardware profiles and unsupported standby pass modes before serial I/O so unsupported
+  controls remain unavailable to callers and the control panel.
+- Tightened RTC and `U` extension selectors and lengths while preserving compatibility with the specification's documented
+  DateTime response-command inconsistency.
+- Added CI enforcement requiring every merge request to increment the semantic version and add its matching changelog
+  section.
+
 ## 1.0.2 - 2026-08-20
 
 - Added Windows Start-menu and desktop shortcuts, a stable MSI upgrade identity, and configurable machine-wide

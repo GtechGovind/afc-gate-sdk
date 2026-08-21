@@ -69,11 +69,68 @@ India profiles additionally support multi-person passage, lamp selection, invali
 
 Maintenance operations are disabled by default. Set `maintenanceOperationsEnabled = true` only in service tooling where reset and actuator tests are intentionally available.
 
+## V2.8 wire audit
+
+The implementation is checked against every command and response in GCU Interface Specification V2.8. The table below
+records the byte-level contract enforced by the adapter; offsets are zero-based within response sub-data after the command
+byte and two-byte error code.
+
+| Command | Request data | Successful response validation |
+| --- | --- | --- |
+| `V` | none | exactly five decimal version characters in `XX.YY` form |
+| `A` | direction, or India direction/lamp/count | acknowledgement only; India counts are `01`–`99`, invalid tickets send `00` |
+| `E` | ASCII `0`/`1` | acknowledgement only |
+| `I`, `R`, `C` | none | acknowledgement only |
+| `P` | selector plus complete 12-byte settings block for writes | selector plus exactly 12 validated setting bytes for reads |
+| `S` | none | exact 23-byte base status, plus four UPS bytes and/or six TCU bytes selected by the hardware profile |
+| `T` | test group and documented action | acknowledgement only; colors and actuator actions are group-specific |
+| `H` | none | exactly 12 offset-nibble sensor and sensor-error bytes |
+| `D` | one `0x30`–`0x3F` pass-mode byte | acknowledgement only; mechanism/site/door-mode rules are checked before writing |
+| `G` | ASCII region `1`–`6` for SectorDoor or `1`–`3` for SwingDoor | acknowledgement only |
+| `X` | selector and optional `yyMMddHHmmss` | selector plus exactly 12 valid date/time digits for reads |
+| `Y` | two uppercase hexadecimal digits, in ten-second units | acknowledgement only |
+| `U/2402` | selector, fixed extension ID, timeout, and pass mode | exact selector/timeout/mode response; Kolkata profiles only |
+| `U/1102` | selector, fixed extension ID, and two 0.1-second delays | exact selector and two delay values in the documented `0`–`10` range |
+
+The fixed `S` block is decoded as follows:
+
+| Offset | Size | Field | Accepted representation |
+| ---: | ---: | --- | --- |
+| 0 | 1 | pass mode | `0x30`–`0x3F` |
+| 1 | 2 | entry count | decimal `00`–`99` |
+| 3 | 2 | exit count | decimal `00`–`99` |
+| 5 | 1 | passage result | `0x30`–`0x39` or `0x40` |
+| 6 | 1 | entry error | `0x30`, `0x33`, `0x35`, or `0x39` |
+| 7 | 1 | exit error | `0x30`, `0x33`, `0x35`, or `0x39` |
+| 8 | 1 | door faults | base `0x40` plus four fault bits |
+| 9 | 1 | occupied zones | base `0x80` plus seven zone bits |
+| 10 | 3 | door switches | each byte `0x40`–`0x4F` |
+| 13 | 8 | controller inputs | each byte `0x30`–`0x3F` |
+| 21 | 1 | emergency source | `0x30`–`0x33` |
+| 22 | 1 | sensor/child-sensor error | `0x30`–`0x32` |
+| 23 | 4 | optional UPS | raw online/battery bits plus decimal `00`–`99` or `FF` charge |
+| 23 or 27 | 6 | optional TCU | two decimal counters and return-cup state `00`/`01` |
+
+Puloon profiles are rejected before connection when they request a FLAP mechanism, SwingDoor normal-open mode, UPS or
+TCU outside India, or child sensors outside China. `GateSdk.support(config)` uses the same validation, so applications
+cannot accidentally render options that the configured hardware cannot execute.
+
+Two inconsistencies in the document are handled explicitly. The DateTime response diagram identifies command `P` even
+though the command list and request use `X`, so responses using either byte are accepted. The open/close-delay examples
+say “10 seconds,” but their stated 0.1-second unit and maximum are one second; the implementation follows the stated
+range and unit (`0`–`1000 ms`, in `100 ms` steps).
+
 ## Status and reconnect behavior
 
 `connect()` reports success only after the serial port opens and a valid `S` status response is decoded. The SDK then polls status at the configured interval; Puloon requires at least 101 milliseconds. Set `statusPollInterval = null` to disable background polling and call `refreshStatus()` explicitly.
 
 Read-only requests may be retried according to `readRetries`. Passage, emergency, reset, diagnostics, clock, mode, timing, and settings writes are never retried or replayed after a reconnect.
+
+If a status response violates V2.8, the protocol error written to the application log includes the field name, zero-based
+payload offset, received byte, accepted range, payload length, and complete hexadecimal status payload. The session also
+records per-attempt timeouts, retry/fail decisions, uncorrelated response command/sequence/retry metadata, and truncated
+malformed-frame hex. These diagnostics make firmware, cabling, noise, and correlation analysis possible without enabling
+unrestricted valid-frame logging.
 
 ## Settings
 

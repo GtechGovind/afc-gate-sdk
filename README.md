@@ -12,8 +12,8 @@ diagnostics, and lifecycle through one vendor-neutral interface.
 [![JVM](https://img.shields.io/badge/JVM-17%2B-e76f00?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/17/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-0b7285.svg)](LICENSE)
 [![API](https://img.shields.io/badge/public_API-com.qurkos.gate.sdk-2563eb)](#public-api)
-[![Tests](https://img.shields.io/badge/tests-51_passing-16a34a)](#build-and-verify)
-[![Coverage](https://img.shields.io/badge/line_coverage-93.52%25-16a34a)](#build-and-verify)
+[![Tests](https://img.shields.io/badge/tests-74_passing-16a34a)](#build-and-verify)
+[![Coverage](https://img.shields.io/badge/line_coverage-89.82%25-16a34a)](#build-and-verify)
 
 [Quick start](#quick-start) · [Commands](#send-gate-commands) ·
 [Control panel](#desktop-control-panel) · [Architecture](#how-it-works) · [Documentation](#documentation) ·
@@ -76,7 +76,7 @@ repositories {
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.qurkos.afc:afc-gate-sdk:1.0.2")
+            implementation("com.qurkos.afc:afc-gate-sdk:1.0.3")
         }
     }
 }
@@ -224,8 +224,8 @@ runtime dependencies.
 
 The installers provide native application-menu integration and branded icons.
 Windows also installs Start-menu and desktop shortcuts. Persistent rotating
-logs can be opened from the Event Log screen and are stored in the standard
-per-user log/state directory for each operating system.
+diagnostic logs include runtime, port/profile, lifecycle, retry, protocol, and changed-status context. They can be opened
+from the Event Log screen and are stored in the standard per-user log/state directory for each operating system.
 
 Five operational screens are included:
 

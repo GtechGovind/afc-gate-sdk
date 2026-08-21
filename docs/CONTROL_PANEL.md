@@ -50,15 +50,17 @@ dependencies {
 
 The JAR contains the compiled control-panel classes and Compose resources. The
 consuming application remains responsible for its Compose Desktop runtime and
-the `com.qurkos.afc:afc-gate-sdk:1.0.2` dependency; file dependencies do not
+the `com.qurkos.afc:afc-gate-sdk:1.0.3` dependency; file dependencies do not
 carry Maven transitive metadata.
 
 ## Persistent application logs
 
-The control panel writes operational events, safe semantic TX/RX traffic,
-lifecycle messages, and uncaught exceptions to rotating UTF-8 log files. Raw
-protocol bytes, credentials, and passenger identifiers are not logged. Each
-file is limited to 5 MiB and the latest seven files are retained.
+The control panel writes runtime/OS details, detected ports, the complete non-secret gate profile, resolved support,
+connection and reconnect transitions, correlated semantic TX/RX traffic, per-attempt timeouts, uncorrelated-frame
+metadata, changed status snapshots, protocol validation failures, and uncaught exceptions to rotating UTF-8 log files.
+Valid raw frames, credentials, ticket contents, and passenger identifiers are not logged. A rejected status payload is
+recorded in full hexadecimal form; other rejected frames are capped at 128 bytes so CRC/framing faults can be diagnosed
+without allowing unbounded log records. Each file is limited to 5 MiB and the latest seven files are retained.
 
 | Platform | Default log directory |
 |---|---|

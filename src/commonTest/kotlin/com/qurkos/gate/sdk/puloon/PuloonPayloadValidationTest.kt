@@ -12,15 +12,21 @@ import com.qurkos.gate.sdk.internal.puloon.ascii
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class PuloonPayloadValidationTest {
     @Test
     fun statusRejectsBadLengthCountersAndMode() {
-        assertFailsWith<IllegalArgumentException> {
-            PuloonPayloadCodec.decodeStatus(ByteArray(22), GateHardwareProfile())
-        }
+        val short =
+            assertFailsWith<IllegalArgumentException> {
+                PuloonPayloadCodec.decodeStatus(ByteArray(22), GateHardwareProfile())
+            }
+        assertTrue(short.message.orEmpty().contains("length=22"))
+        assertTrue(short.message.orEmpty().contains("payloadHex="))
         val badCounter = baseStatus().also { it[1] = ascii('X') }
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeStatus(badCounter, GateHardwareProfile())
@@ -28,6 +34,70 @@ class PuloonPayloadValidationTest {
         val badMode = baseStatus().also { it[0] = ascii('Z') }
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeStatus(badMode, GateHardwareProfile())
+        }
+    }
+
+    @Test
+    fun statusErrorsIdentifyTheExactFieldOffsetValueRangeAndPayload() {
+        val badSwitch = baseStatus().also { it[11] = ascii('0') }
+
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                PuloonPayloadCodec.decodeStatus(badSwitch, GateHardwareProfile())
+            }
+
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("switch status at payload offset 11"))
+        assertTrue(message.contains("actual 0x30"))
+        assertTrue(message.contains("expected 0x40..0x4F"))
+        assertTrue(message.contains("payloadHex="))
+    }
+
+    @Test
+    fun statusRequiresConfiguredSuffixesAndDecodesUpsAndTokenFields() {
+        val hardware =
+            GateHardwareProfile(
+                site = GateSite.INDIA,
+                modules = setOf(GateModule.UPS, GateModule.TOKEN_CONTROL_UNIT),
+            )
+        val status =
+            baseStatus() +
+                byteArrayOf(0x08, 0x01) +
+                "99".encodeToByteArray() +
+                "123401".encodeToByteArray()
+
+        val decoded = PuloonPayloadCodec.decodeStatus(status, hardware)
+        val power = assertNotNull(decoded.power)
+
+        assertEquals(99, power.chargePercent)
+        assertEquals(true, power.online)
+        assertEquals(true, power.onBattery)
+        assertEquals(12, decoded.tokenPathACount)
+        assertEquals(34, decoded.tokenPathBCount)
+        assertTrue(decoded.returnCupOccupied == true)
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeStatus(baseStatus(), hardware)
+        }
+        val noModules = PuloonPayloadCodec.decodeStatus(baseStatus(), GateHardwareProfile())
+        assertNull(noModules.power)
+        assertFalse(noModules.sensors.hasFault)
+    }
+
+    @Test
+    fun statusRejectsUndocumentedEmergencySensorAndReturnCupValues() {
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeStatus(baseStatus().also { it[21] = ascii('4') }, GateHardwareProfile())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeStatus(baseStatus().also { it[22] = ascii('3') }, GateHardwareProfile())
+        }
+        val hardware =
+            GateHardwareProfile(
+                site = GateSite.INDIA,
+                modules = setOf(GateModule.TOKEN_CONTROL_UNIT),
+            )
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeStatus(baseStatus() + "000002".encodeToByteArray(), hardware)
         }
     }
 
@@ -73,6 +143,7 @@ class PuloonPayloadValidationTest {
         assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.decodeClock("26010112345".encodeToByteArray()) }
         assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.decodeClock("2601011234567".encodeToByteArray()) }
         assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.decodeClock("26010112X456".encodeToByteArray()) }
+        assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.decodeClock("0260101123456".encodeToByteArray()) }
     }
 
     @Test
@@ -84,6 +155,12 @@ class PuloonPayloadValidationTest {
         }
         assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.encodeOffsetHexByte(-1) }
         assertFailsWith<IllegalArgumentException> { PuloonPayloadCodec.encodeOffsetHexByte(256) }
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeStandby(byteArrayOf(ascii('0'), ascii('1'), ascii('4'), ascii('3'), 0x3F))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeDoorTiming(byteArrayOf(ascii('0'), ascii('0'), ascii('0'), ascii('0'), ascii('0')))
+        }
     }
 
     @Test

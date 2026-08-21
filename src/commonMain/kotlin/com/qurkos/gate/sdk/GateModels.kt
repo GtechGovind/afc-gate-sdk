@@ -52,6 +52,7 @@ public enum class GateCapability {
     DOOR_TIMING,
     SETTINGS,
     DIAGNOSTICS,
+    RETURN_CUP_DIAGNOSTIC,
     RESET,
 }
 
@@ -148,17 +149,28 @@ public enum class GateEmergencyState {
     UNKNOWN,
 }
 
+/** Sensor-fault class reported by the fixed Puloon status record. */
+public enum class GateSensorFaultCategory {
+    /** Fault reported by the primary gate sensor bank. */
+    GENERAL,
+
+    /** Fault reported specifically by the optional child-sensor bank. */
+    CHILD,
+}
+
 /**
- * Normalized snapshot of gate sensors.
+ * Immutable sensor snapshot with both aggregate and individually mapped fault information.
  *
  * @property active One-based identifiers currently active.
- * @property hasFault Whether the controller reports a sensor subsystem fault.
- * @property faulted One-based identifiers whose individual fault bits are set.
+ * @property hasFault Whether any controller sensor fault bit is set, including bits without a profile mapping.
+ * @property faulted One-based identifiers whose mapped individual fault bits are set.
+ * @property faultCategory Optional controller-reported general/child category from the fixed status record.
  */
 public data class GateSensorStatus(
     public val active: Set<GateSensorId>,
     public val hasFault: Boolean,
     public val faulted: Set<GateSensorId> = emptySet(),
+    public val faultCategory: GateSensorFaultCategory? = null,
 )
 
 /**
@@ -259,7 +271,10 @@ public enum class GateOccupancyZone {
  * @property inputs One-based controller input states when exposed by the status frame.
  * @property tokenPathACount Optional token-control-unit path A count.
  * @property tokenPathBCount Optional token-control-unit path B count.
- * @property returnCupOccupied Optional token return-cup occupancy state.
+ * @property returnCupSignalActive Raw logical return-cup input state. The vendor documents `0`/`1` but does not define
+ * which level means occupied; applications must not infer occupancy until their hardware profile is commissioned.
+ * @property returnCupOccupied Calibrated occupancy state. It remains `null` until a future profile supplies verified
+ * polarity, preventing an undocumented `0`/`1` assumption.
  * @property observedAt SDK clock instant at which the valid response was decoded.
  */
 public data class GateStatus(
@@ -278,6 +293,7 @@ public data class GateStatus(
     public val inputs: Map<Int, Boolean> = emptyMap(),
     public val tokenPathACount: Int? = null,
     public val tokenPathBCount: Int? = null,
+    public val returnCupSignalActive: Boolean? = null,
     public val returnCupOccupied: Boolean? = null,
     public val observedAt: Instant,
 )

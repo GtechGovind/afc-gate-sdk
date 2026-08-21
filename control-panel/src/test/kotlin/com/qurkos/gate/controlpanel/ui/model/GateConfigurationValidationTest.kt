@@ -33,4 +33,24 @@ class GateConfigurationValidationTest {
         assertTrue(GateConfigurationUi(protocolRevision = "V2_8").hasValidInputs())
         assertFalse(GateConfigurationUi(protocolRevision = "V3_0").hasValidInputs())
     }
+
+    @Test
+    fun rejectsMechanicallyImpossibleProfileCombinations() {
+        assertFalse(GateConfigurationUi(mechanism = "SWING", safetyRegion = "4").hasValidInputs())
+        assertFalse(GateConfigurationUi(mechanism = "SWING", controllerVariant = "BLDC").hasValidInputs())
+        assertFalse(
+            GateConfigurationUi(
+                protocolRevision = "V2_5",
+                site = "INDIA",
+                tokenControlUnitInstalled = true,
+            ).hasValidInputs(),
+        )
+        assertFalse(
+            GateConfigurationUi(
+                mechanism = "SWING",
+                site = "INDIA",
+                tokenControlUnitInstalled = true,
+            ).hasValidInputs(),
+        )
+    }
 }

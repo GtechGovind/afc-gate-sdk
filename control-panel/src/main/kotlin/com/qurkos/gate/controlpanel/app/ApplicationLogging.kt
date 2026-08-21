@@ -202,6 +202,7 @@ internal fun GateDeviceConfig.diagnosticLogMessage(): String {
     return "gateConfiguration vendor=${vendor.name} port=${serial.port.value.logValue()} " +
         "baud=${parameters.baudRate} dataBits=${parameters.dataBits} stopBits=${parameters.stopBits.name} " +
         "parity=${parameters.parity.name} mechanism=${hardware.mechanism.name} site=${hardware.site.name} " +
+        "protocolRevision=${hardware.protocolRevision.name} controllerVariant=${hardware.controllerVariant.name} " +
         "modules=${hardware.modules.map { it.name }.sorted()} normalOpen=${hardware.normalOpen} " +
         "responseTimeoutMs=${runtime.responseTimeout.inWholeMilliseconds} readRetries=${runtime.readRetries} " +
         "statusPollMs=${runtime.statusPollInterval?.inWholeMilliseconds ?: "disabled"} reconnect=$reconnect " +
@@ -224,7 +225,7 @@ internal fun GateStatus.diagnosticLogMessage(): String =
         "switchesOn=${switches.filterValues { it }.keys.sorted()} inputsOn=${inputs.filterValues { it }.keys.sorted()} " +
         "upsPresent=${power?.upsPresent ?: false} upsOnline=${power?.online} onBattery=${power?.onBattery} " +
         "chargePercent=${power?.chargePercent} tokenA=$tokenPathACount tokenB=$tokenPathBCount " +
-        "returnCupOccupied=$returnCupOccupied"
+        "returnCupSignalActive=$returnCupSignalActive returnCupOccupied=$returnCupOccupied"
 
 internal fun GateSensorStatus.diagnosticLogMessage(): String =
     "sensorChanged hasFault=$hasFault active=${active.map { it.number }.sorted()} " +

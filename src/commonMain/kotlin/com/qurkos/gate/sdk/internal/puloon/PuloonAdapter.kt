@@ -1,6 +1,7 @@
 package com.qurkos.gate.sdk.internal.puloon
 
 import com.qurkos.gate.sdk.GateCapability
+import com.qurkos.gate.sdk.GateControllerVariant
 import com.qurkos.gate.sdk.GateDescriptor
 import com.qurkos.gate.sdk.GateDiagnostic
 import com.qurkos.gate.sdk.GateDoorTestAction
@@ -29,6 +30,7 @@ import com.qurkos.gate.sdk.internal.SerialTransaction
 import com.qurkos.gate.sdk.internal.StreamingFrameDecoder
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Puloon GCU implementation of the internal protocol-adapter contract.
@@ -82,7 +84,12 @@ internal class PuloonAdapter(
             is GateOperation.Emergency -> write('E', byteArrayOf(ascii(if (operation.enabled) '1' else '0')))
             GateOperation.Initialize -> write('I')
             GateOperation.Status ->
-                read('S') { data ->
+                transaction(
+                    command = 'S',
+                    data = ByteArray(0),
+                    responseCommands = setOf('S'),
+                    idempotent = GateModule.TOKEN_CONTROL_UNIT !in hardware.modules,
+                ) { data ->
                     GateResponse.Status(PuloonPayloadCodec.decodeStatus(data, hardware))
                 }
             is GateOperation.SetPassMode -> {
@@ -203,6 +210,7 @@ internal class PuloonAdapter(
     /** Validates and encodes the selected `U/2402` standby extension. */
     private fun encodeStandby(policy: GateStandbyPolicy): ByteArray {
         val seconds = policy.timeout.inWholeSeconds
+        require(policy.timeout == seconds.toInt().seconds) { "Standby timeout must use whole-second steps" }
         require(seconds in 0..MAX_UNSIGNED_BYTE) { "Standby timeout must be between 0 and 255 seconds" }
         return byteArrayOf(ascii('0')) + STANDBY_SELECTOR +
             PuloonOffsetHexCodec.encode(seconds.toInt()) +
@@ -271,8 +279,22 @@ internal class PuloonAdapter(
                 add(GateCapability.STANDBY)
             }
             if (hardware.isIndia() && GateModule.UPS in hardware.modules) add(GateCapability.UPS_SHUTDOWN)
-            if (hardware.isIndia() && hardware.mechanism == GateMechanism.SECTOR) add(GateCapability.INVALID_TICKET)
-            if (maintenanceOperationsEnabled) addAll(MAINTENANCE_CAPABILITIES)
+            if (
+                hardware.isIndia() &&
+                hardware.mechanism == GateMechanism.SECTOR &&
+                hardware.controllerVariant == GateControllerVariant.BLDC
+            ) {
+                add(GateCapability.INVALID_TICKET)
+            }
+            if (maintenanceOperationsEnabled) {
+                addAll(MAINTENANCE_CAPABILITIES)
+                if (
+                    hardware.protocolRevision == GateProtocolRevision.V2_8 &&
+                    GateModule.TOKEN_CONTROL_UNIT in hardware.modules
+                ) {
+                    add(GateCapability.RETURN_CUP_DIAGNOSTIC)
+                }
+            }
         }
 
     private fun supportedSafetyRegions(): Set<GateSafetyRegion> =
@@ -292,8 +314,8 @@ internal class PuloonAdapter(
             if (hardware.site == GateSite.CHINA && GateModule.CHILD_SENSORS in hardware.modules) {
                 addAll(listOf(10, 20, 21, 22).map(::GateSensorId))
             }
-            if (hardware.isIndia() && GateModule.TOKEN_CONTROL_UNIT in hardware.modules) {
-                addAll(listOf(21, 22, 25, 26).map(::GateSensorId))
+            if (hardware.hasV28TokenControlUnit()) {
+                addAll(listOf(21, 22, 23, 24).map(::GateSensorId))
             }
         }
 
@@ -358,6 +380,13 @@ internal class PuloonAdapter(
     /** Returns whether India-specific GCU commands and fields are available. */
     private fun GateHardwareProfile.isIndia(): Boolean = site == GateSite.INDIA || site == GateSite.KOLKATA_INDIA
 
+    /** Returns whether the V2.8-only SectorDoor token sensor bank is physically available. */
+    private fun GateHardwareProfile.hasV28TokenControlUnit(): Boolean =
+        protocolRevision == GateProtocolRevision.V2_8 &&
+            isIndia() &&
+            mechanism == GateMechanism.SECTOR &&
+            GateModule.TOKEN_CONTROL_UNIT in modules
+
     /** Rejects extension commands that were introduced after the V2.5 protocol. */
     private fun requireV28(feature: String) {
         require(hardware.protocolRevision == GateProtocolRevision.V2_8) {
@@ -381,7 +410,7 @@ internal class PuloonAdapter(
         val STANDBY_SELECTOR = "2402".encodeToByteArray()
         val DOOR_TIMING_SELECTOR = "1102".encodeToByteArray()
         const val PASS_MODE_BASE = 0x30
-        const val MAX_SEQUENCE = 0xFFFF
+        const val MAX_SEQUENCE = 0xFF
         const val MAX_UNSIGNED_BYTE = 0xFF
         const val UPS_STEP_SECONDS = 10
         const val MAX_UPS_SECONDS = MAX_UNSIGNED_BYTE * UPS_STEP_SECONDS

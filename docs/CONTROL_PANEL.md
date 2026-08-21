@@ -44,13 +44,13 @@ a file dependency:
 
 ```kotlin
 dependencies {
-    implementation(files("libs/afc-gate-control-panel-1.0.2.jar"))
+    implementation(files("libs/afc-gate-control-panel-3.0.0.jar"))
 }
 ```
 
 The JAR contains the compiled control-panel classes and Compose resources. The
 consuming application remains responsible for its Compose Desktop runtime and
-the `com.qurkos.afc:afc-gate-sdk:1.0.3` dependency; file dependencies do not
+the `com.qurkos.afc:afc-gate-sdk:3.0.0` dependency; file dependencies do not
 carry Maven transitive metadata.
 
 ## Persistent application logs
@@ -79,6 +79,10 @@ baud rate, response timeout, and polling interval under Configuration, then use
 the connection control in the persistent header. The controller creates a
 Puloon `Gate` with the public factory and routes actions as follows:
 
+Select the actual protocol revision, mechanism, Standard/BLDC controller variant, site, and installed modules. Impossible
+combinations are rejected before connection. After the status handshake, the panel reads the controller's complete
+settings block and uses it as the editable baseline; it does not overwrite hardware from display defaults.
+
 | Control-panel action | SDK operation |
 |---|---|
 | Allow Entry | `Gate.allowEntry()` |
@@ -103,7 +107,8 @@ shown as a typed operational message rather than thrown through the UI.
 - Unsupported controls and finite choices are omitted using `GateSdk.support`.
 - The UI contains no simulator, fake transport, or simulated connected state.
 - Motion begins only after a successful SDK result or validated status update.
-- Emergency activation and reset require a continuous three-second hold.
+- Emergency activation, controller reset, and counter clear/door-close require a continuous three-second hold.
+- **Run read-only** excludes every maintenance actuator, lamp, buzzer, reset, and counter-clear operation.
 - Maintenance diagnostics remain capability-gated and require the explicit
   maintenance setting in the hardware configuration.
 - Automatic SDK reconnection never replays entry, exit, emergency, reset, or

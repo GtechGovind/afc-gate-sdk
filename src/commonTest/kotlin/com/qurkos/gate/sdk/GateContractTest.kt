@@ -67,7 +67,11 @@ class GateContractTest {
                 TestSerialTransport { request, fake ->
                     fake.respond(request, responseFor(request, baseStatus()))
                 }
-            val gate = createGate(transport, GateHardwareProfile(site = GateSite.INDIA))
+            val gate =
+                createGate(
+                    transport,
+                    GateHardwareProfile(site = GateSite.INDIA, controllerVariant = GateControllerVariant.BLDC),
+                )
             assertSuccess(gate.connect())
 
             assertSuccess(gate.allowEntry())

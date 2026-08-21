@@ -93,11 +93,17 @@ public object GateSdk {
     private fun GateHardwareProfile.invalidPuloonProfileReason(): String? =
         when {
             mechanism == GateMechanism.FLAP -> "Puloon GCU supports SectorDoor or SwingDoor, not FLAP"
+            controllerVariant == GateControllerVariant.BLDC && mechanism != GateMechanism.SECTOR ->
+                "Puloon BLDC controller variant requires SectorDoor"
             mechanism == GateMechanism.SWING && normalOpen -> "Puloon SwingDoor supports only normal-close mode"
             GateModule.UPS in modules && site != GateSite.INDIA && site != GateSite.KOLKATA_INDIA ->
                 "Puloon UPS support is available only for India profiles"
             GateModule.TOKEN_CONTROL_UNIT in modules && site != GateSite.INDIA && site != GateSite.KOLKATA_INDIA ->
                 "Puloon token-control-unit support is available only for India profiles"
+            GateModule.TOKEN_CONTROL_UNIT in modules && protocolRevision != GateProtocolRevision.V2_8 ->
+                "Puloon token-control-unit support requires protocol V2.8"
+            GateModule.TOKEN_CONTROL_UNIT in modules && mechanism != GateMechanism.SECTOR ->
+                "Puloon token-control-unit support requires SectorDoor"
             GateModule.CHILD_SENSORS in modules && site != GateSite.CHINA ->
                 "Puloon child-sensor support is available only for the China profile"
             else -> null

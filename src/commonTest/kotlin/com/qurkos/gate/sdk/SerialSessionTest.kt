@@ -8,8 +8,10 @@ import com.qurkos.gate.sdk.internal.SerialTransportState
 import com.qurkos.gate.sdk.internal.puloon.PuloonAdapter
 import com.qurkos.gate.sdk.internal.puloon.PuloonFrame
 import com.qurkos.gate.sdk.internal.puloon.PuloonFrameCodec
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -51,6 +53,28 @@ class SerialSessionTest {
             assertEquals(listOf(0, 1), frames.map(PuloonFrame::retry))
             session.disconnect()
             Unit
+        }
+
+    @Test
+    fun lostTcuStatusResponseIsNotRetriedBecauseReadResetsCounters() =
+        runBlocking {
+            val transport = TestSerialTransport()
+            val adapter =
+                PuloonAdapter(
+                    GateHardwareProfile(
+                        site = GateSite.INDIA,
+                        modules = setOf(GateModule.TOKEN_CONTROL_UNIT),
+                    ),
+                    maintenanceOperationsEnabled = false,
+                )
+            val session = createSession(transport, adapter, readRetries = 3)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            val status = assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Status)).value
+
+            assertIs<GateResult.Failure>(session.transact(status))
+
+            assertEquals(1, transport.writes.size)
+            session.disconnect()
         }
 
     @Test
@@ -114,18 +138,17 @@ class SerialSessionTest {
         }
 
     @Test
-    fun initialOpenFailureRecoversWithoutCallerCommandReplay() =
+    fun initialOpenFailureDoesNotSeizePortInUnusableBackgroundSession() =
         runBlocking {
             val transport = TestSerialTransport(openFailuresRemaining = 1)
             val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
             val session = createSession(transport, adapter, readRetries = 0, reconnect = true)
 
             assertIs<GateResult.Failure>(session.connect())
-            withTimeout(2.seconds) {
-                while (session.connectionState.value != GateConnectionState.CONNECTED) delay(10.milliseconds)
-            }
+            delay(100.milliseconds)
 
-            assertEquals(2, transport.openCount)
+            assertEquals(GateConnectionState.FAILED, session.connectionState.value)
+            assertEquals(1, transport.openCount)
             assertEquals(0, transport.writes.size)
             session.disconnect()
             Unit
@@ -167,6 +190,34 @@ class SerialSessionTest {
             assertTrue(warnings.all { it.contains("timeoutMs=30") })
             session.disconnect()
             Unit
+        }
+
+    @Test
+    fun disconnectWaitsForInFlightTransactionBeforeClosingTransport() =
+        runBlocking {
+            val writeStarted = CompletableDeferred<Unit>()
+            val releaseResponse = CompletableDeferred<Unit>()
+            val transport =
+                TestSerialTransport { request, fake ->
+                    writeStarted.complete(Unit)
+                    releaseResponse.await()
+                    fake.respond(request, "V0001.23".encodeToByteArray())
+                }
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 0)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            val transaction = assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Firmware)).value
+
+            val operation = async { session.transact(transaction) }
+            writeStarted.await()
+            val disconnect = async { session.disconnect() }
+            delay(20.milliseconds)
+            assertEquals(0, transport.closeCount)
+
+            releaseResponse.complete(Unit)
+            assertIs<GateResult.Success<*>>(operation.await())
+            assertIs<GateResult.Success<Unit>>(disconnect.await())
+            assertEquals(1, transport.closeCount)
         }
 
     @Test
@@ -238,6 +289,8 @@ internal class TestSerialTransport(
     val writes = mutableListOf<ByteArray>()
     var openCount = 0
         private set
+    var closeCount = 0
+        private set
 
     override suspend fun open(config: SerialConnectionConfig) {
         openCount += 1
@@ -250,6 +303,7 @@ internal class TestSerialTransport(
     }
 
     override suspend fun close() {
+        closeCount += 1
         mutableState.value = SerialTransportState.CLOSED
     }
 

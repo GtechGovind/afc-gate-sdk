@@ -14,8 +14,8 @@ import com.qurkos.gate.sdk.internal.protocolFailure
  *
  * Mutable payload input and output are defensively copied so codec state cannot be modified by callers.
  *
- * @property sequence Unsigned 16-bit little-endian request/response correlation value.
- * @property retry Unsigned 8-bit retry attempt field.
+ * @property sequence Unsigned 8-bit correlation counter encoded as two offset hexadecimal nibbles.
+ * @property retry Unsigned 4-bit retry attempt encoded as one offset hexadecimal nibble.
  * @property payload Non-empty command and data bytes, defensively copied on input.
  */
 internal class PuloonFrame(
@@ -45,8 +45,8 @@ internal class PuloonFrame(
 
     /** Frame field bounds defined by the Puloon protocol and defensive memory policy. */
     companion object {
-        private const val MAX_SEQUENCE = 0xFFFF
-        private const val MAX_RETRY = 0xFF
+        private const val MAX_SEQUENCE = 0xFF
+        private const val MAX_RETRY = 0x0F
         private const val MAX_PAYLOAD_LENGTH = 4_096
     }
 }
@@ -63,11 +63,9 @@ internal object PuloonFrameCodec {
     fun encode(frame: PuloonFrame): ByteArray {
         val payload = frame.payload
         val protected =
-            byteArrayOf(
-                frame.sequence.toByte(),
-                (frame.sequence shr BITS_PER_BYTE).toByte(),
-                frame.retry.toByte(),
-            ) + payload
+            PuloonOffsetHexCodec.encode(frame.sequence) +
+                byteArrayOf((OFFSET_HEX_BASE + frame.retry).toByte()) +
+                payload
         val crc = crc16Xmodem(protected).toString(RADIX_HEX).uppercase().padStart(CRC_TEXT_LENGTH, '0')
         return byteArrayOf(LF) + protected + crc.encodeToByteArray() + CR
     }
@@ -84,12 +82,12 @@ internal object PuloonFrameCodec {
                 .toIntOrNull(RADIX_HEX)
                 ?: throw IllegalArgumentException("Invalid Puloon CRC text")
         require(crc16Xmodem(protected) == expected) { "Puloon CRC mismatch" }
-        val sequence =
-            protected[0].unsigned() or
-                (protected[1].unsigned() shl BITS_PER_BYTE)
+        val sequence = PuloonOffsetHexCodec.decode(protected, 0, "sequence")
+        val retry = protected[2].unsigned() - OFFSET_HEX_BASE
+        require(retry in 0..MAX_RETRY) { "Invalid Puloon retry nibble" }
         return PuloonFrame(
             sequence = sequence,
-            retry = protected[2].unsigned(),
+            retry = retry,
             payload = protected.copyOfRange(3, protected.size),
         )
     }
@@ -122,6 +120,8 @@ internal object PuloonFrameCodec {
     private const val CRC_TEXT_LENGTH = 4
     private const val MINIMUM_FRAME_LENGTH = 10
     private const val RADIX_HEX = 16
+    private const val OFFSET_HEX_BASE = 0x30
+    private const val MAX_RETRY = 0x0F
 }
 
 /**

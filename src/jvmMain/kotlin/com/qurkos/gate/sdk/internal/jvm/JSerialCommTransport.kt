@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
@@ -52,9 +53,10 @@ internal class JSerialCommTransport(
     override suspend fun open(config: SerialConnectionConfig) {
         close()
         mutableState.value = SerialTransportState.OPENING
+        var candidate: SerialPort? = null
         try {
             val parameters = requireNotNull(config.parameters) { "Serial parameters were not resolved" }
-            val candidate = configure(SerialPort.getCommPort(config.port.value), parameters)
+            candidate = configure(SerialPort.getCommPort(config.port.value), parameters)
             if (!withContext(ioDispatcher) { candidate.openPort() }) {
                 error("Unable to open serial port ${config.port.value}")
             }
@@ -65,11 +67,28 @@ internal class JSerialCommTransport(
             port = candidate
             mutableState.value = SerialTransportState.OPEN
             readerJob = startReader(candidate)
+            candidate = null
         } catch (cancellation: CancellationException) {
+            cleanupFailedOpen(candidate)
+            mutableState.value = SerialTransportState.CLOSED
             throw cancellation
         } catch (error: Exception) {
+            cleanupFailedOpen(candidate)
             mutableState.value = SerialTransportState.FAILED
             throw error
+        }
+    }
+
+    /** Releases a native handle acquired before [open] completed, including during caller cancellation. */
+    private suspend fun cleanupFailedOpen(candidate: SerialPort?) {
+        val opened = port ?: candidate
+        port = null
+        withContext(NonCancellable) {
+            readerJob?.cancelAndJoin()
+            readerJob = null
+            withContext(ioDispatcher) {
+                opened?.closePort()
+            }
         }
     }
 

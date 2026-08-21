@@ -217,6 +217,19 @@ private fun SerialSettings(
                 listOf(SelectionOption("SECTOR", "SectorDoor"), SelectionOption("SWING", "SwingDoor")),
                 Modifier.weight(1f),
             )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            OptionDropdown(
+                "Controller variant",
+                configuration.controllerVariant,
+                {
+                    callbacks.onConfigurationChanged(
+                        configuration.copy(controllerVariant = it, hasUnsavedChanges = true),
+                    )
+                },
+                listOf(SelectionOption("STANDARD", "Standard"), SelectionOption("BLDC", "BLDC SectorDoor")),
+                Modifier.weight(1f),
+            )
             OptionDropdown(
                 "Controller profile",
                 configuration.site,

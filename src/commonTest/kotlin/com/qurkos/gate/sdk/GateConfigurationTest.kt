@@ -71,6 +71,20 @@ class GateConfigurationTest {
                 GateHardwareProfile(mechanism = GateMechanism.SWING, normalOpen = true),
                 GateHardwareProfile(site = GateSite.GENERIC, modules = setOf(GateModule.UPS)),
                 GateHardwareProfile(site = GateSite.CHINA, modules = setOf(GateModule.TOKEN_CONTROL_UNIT)),
+                GateHardwareProfile(
+                    site = GateSite.INDIA,
+                    protocolRevision = GateProtocolRevision.V2_5,
+                    modules = setOf(GateModule.TOKEN_CONTROL_UNIT),
+                ),
+                GateHardwareProfile(
+                    mechanism = GateMechanism.SWING,
+                    site = GateSite.INDIA,
+                    modules = setOf(GateModule.TOKEN_CONTROL_UNIT),
+                ),
+                GateHardwareProfile(
+                    mechanism = GateMechanism.SWING,
+                    controllerVariant = GateControllerVariant.BLDC,
+                ),
                 GateHardwareProfile(site = GateSite.INDIA, modules = setOf(GateModule.CHILD_SENSORS)),
             )
 

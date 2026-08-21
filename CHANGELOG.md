@@ -2,6 +2,29 @@
 
 All notable changes are recorded here. The project follows semantic versioning.
 
+## 3.0.0 - 2026-08-21
+
+This release intentionally changes Puloon framing and hardware-profile semantics to match both shipped PGcuTp vendor
+tools. Recompile consumers and explicitly select `controllerVariant = BLDC` only for BLDC SectorDoor controllers.
+
+- Replaced the delimiter-unsafe raw 16-bit frame counter with the deployed vendor-tool encoding: one unsigned-byte
+  counter represented by two `0x30..0x3F` nibbles and one offset retry nibble. Added vectors for `0x0A`, `0x0D`, and
+  `0xFF`, fragmentation, correlation, retry, and wrap at 256.
+- Added `GateControllerVariant` so BLDC-only invalid-ticket behavior is never advertised to standard SectorDoor or
+  SwingDoor controllers.
+- Enforced V2.8 SectorDoor for TCU profiles, corrected TCU sensor IDs to 21–24, and rejected V2.8 token suffixes for V2.5.
+- Made TCU status reads non-retryable because the controller clears token counters after responding; a lost response can
+  no longer be hidden by a retry that returns zero counters.
+- Preserved general versus child-sensor fault categories, aggregate faults from unmapped raw bits, and the uncalibrated
+  return-cup signal without claiming an undocumented occupied polarity.
+- Validated RTC years, whole-second standby values, and door-timing responses symmetrically with write limits.
+- Prevented hidden reconnect after an initial open failure, serialized disconnect against in-flight transactions, and
+  guaranteed failed/cancelled JVM opens release acquired native handles.
+- Loaded the physical controller settings before control-panel editing and added profile-exact BLDC, revision, TCU, and
+  Swing safety-region preflight validation.
+- Hardened releases so tags must already be reachable from `main`, checksum files use exact asset basenames, and native
+  installer filenames are stable across GitHub upload normalization.
+
 ## 2.0.0 - 2026-08-21
 
 This release adds `protocolRevision` to `GateHardwareProfile`. Recompile consumers against 2.0.0 and select `V2_5` for

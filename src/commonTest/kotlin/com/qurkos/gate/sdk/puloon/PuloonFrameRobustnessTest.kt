@@ -20,16 +20,16 @@ class PuloonFrameRobustnessTest {
     @Test
     fun frameFieldAndPayloadBoundsAreEnforced() {
         assertFailsWith<IllegalArgumentException> { PuloonFrame(-1, 0, byteArrayOf(1)) }
-        assertFailsWith<IllegalArgumentException> { PuloonFrame(0x1_0000, 0, byteArrayOf(1)) }
+        assertFailsWith<IllegalArgumentException> { PuloonFrame(0x100, 0, byteArrayOf(1)) }
         assertFailsWith<IllegalArgumentException> { PuloonFrame(0, -1, byteArrayOf(1)) }
-        assertFailsWith<IllegalArgumentException> { PuloonFrame(0, 0x100, byteArrayOf(1)) }
+        assertFailsWith<IllegalArgumentException> { PuloonFrame(0, 0x10, byteArrayOf(1)) }
         assertFailsWith<IllegalArgumentException> { PuloonFrame(0, 0, ByteArray(0)) }
         assertFailsWith<IllegalArgumentException> { PuloonFrame(0, 0, ByteArray(4_097)) }
 
-        val maximum = PuloonFrame(0xFFFF, 0xFF, ByteArray(4_096) { 0x55 })
+        val maximum = PuloonFrame(0xFF, 0x0F, ByteArray(4_096) { 0x55 })
         val decoded = PuloonFrameCodec.decode(PuloonFrameCodec.encode(maximum))
-        assertEquals(0xFFFF, decoded.sequence)
-        assertEquals(0xFF, decoded.retry)
+        assertEquals(0xFF, decoded.sequence)
+        assertEquals(0x0F, decoded.retry)
         assertEquals(4_096, decoded.payload.size)
     }
 
@@ -49,7 +49,7 @@ class PuloonFrameRobustnessTest {
         val decoder = PuloonFrameDecoder()
         val expected =
             List(1_000) { index ->
-                PuloonFrameCodec.encode(PuloonFrame(index, 0, "S00".encodeToByteArray()))
+                PuloonFrameCodec.encode(PuloonFrame(index and 0xFF, 0, "S00".encodeToByteArray()))
             }
         val stream = expected.fold(ByteArray(0), ByteArray::plus)
         val results = mutableListOf<FrameDecodeResult>()
@@ -58,7 +58,7 @@ class PuloonFrameRobustnessTest {
 
         assertEquals(1_000, results.size)
         val sequences = results.map { assertIs<PuloonFrame>(assertIs<FrameDecodeResult.Frame>(it).value).sequence }
-        assertEquals((0 until 1_000).toList(), sequences)
+        assertEquals((0 until 1_000).map { it and 0xFF }, sequences)
     }
 
     @Test

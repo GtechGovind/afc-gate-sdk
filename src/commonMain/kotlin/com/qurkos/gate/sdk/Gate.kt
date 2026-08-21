@@ -76,7 +76,7 @@ public interface Gate {
     /** Selects a safety-sensor region supported by the gate mechanism. */
     public suspend fun setSafetyRegion(region: GateSafetyRegion): GateResult<Unit>
 
-    /** Resets accumulated entry and exit counters. */
+    /** Resets accumulated entry and exit counters. Puloon controllers also close the barrier as part of this command. */
     public suspend fun clearPassageCounters(): GateResult<Unit>
 
     /** Reads normalized safety-sensor state. */

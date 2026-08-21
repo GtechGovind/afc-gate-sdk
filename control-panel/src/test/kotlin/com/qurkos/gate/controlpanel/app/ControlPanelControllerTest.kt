@@ -220,7 +220,7 @@ class ControlPanelControllerTest {
         }
 
     @Test
-    fun fullOperationsGridRoutesReadMaintenanceRtcCounterAndResetCommands() =
+    fun bulkRunIsReadOnlyWhileIndividualProtectedOperationsRemainAvailable() =
         runTest {
             val fake = FakeGate()
             val controller = controller(fake)
@@ -238,14 +238,24 @@ class ControlPanelControllerTest {
             controller.onDiagnosticRunAll()
             advanceUntilIdle()
 
+            assertEquals(0, fake.initializeCalls)
+            assertEquals(0, fake.clockWrites.size)
+            assertEquals(0, fake.clearCounterCalls)
+            assertEquals(0, fake.resetCalls)
+            assertTrue(
+                controller.state.value.diagnostics
+                    .filterNot { it.requiresMaintenance }
+                    .all { it.state == DiagnosticState.PASSED },
+            )
+
+            listOf("initialize", "clock-sync", "clear-counters", "reset").forEach { id ->
+                controller.onDiagnosticRun(id)
+                advanceUntilIdle()
+            }
             assertEquals(1, fake.initializeCalls)
             assertEquals(1, fake.clockWrites.size)
             assertEquals(1, fake.clearCounterCalls)
             assertEquals(1, fake.resetCalls)
-            assertTrue(
-                controller.state.value.diagnostics
-                    .all { it.state == DiagnosticState.PASSED },
-            )
             controller.close()
         }
 

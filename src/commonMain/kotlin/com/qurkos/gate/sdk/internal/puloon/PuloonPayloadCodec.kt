@@ -16,6 +16,7 @@ import com.qurkos.gate.sdk.GatePassageRequest
 import com.qurkos.gate.sdk.GatePassageResult
 import com.qurkos.gate.sdk.GatePowerStatus
 import com.qurkos.gate.sdk.GateProtocolRevision
+import com.qurkos.gate.sdk.GateSensorFaultCategory
 import com.qurkos.gate.sdk.GateSensorId
 import com.qurkos.gate.sdk.GateSensorStatus
 import com.qurkos.gate.sdk.GateSite
@@ -67,16 +68,23 @@ internal object PuloonPayloadCodec {
         bytes: ByteArray,
         revision: GateProtocolRevision,
     ): GateStatus {
-        require(bytes.size in STATUS_LENGTHS) {
-            "Puloon status payload length ${bytes.size} is unsupported; expected one of ${STATUS_LENGTHS.joinToString()}"
+        val supportedLengths =
+            when (revision) {
+                GateProtocolRevision.V2_5 -> V25_STATUS_LENGTHS
+                GateProtocolRevision.V2_8 -> V28_STATUS_LENGTHS
+            }
+        require(bytes.size in supportedLengths) {
+            "Puloon status payload length ${bytes.size} is unsupported for $revision; " +
+                "expected one of ${supportedLengths.joinToString()}"
         }
         val hasUpsData = bytes.size == STATUS_WITH_UPS_LENGTH || bytes.size == STATUS_WITH_UPS_AND_TOKEN_LENGTH
         val hasTokenData = bytes.size == STATUS_WITH_TOKEN_LENGTH || bytes.size == STATUS_WITH_UPS_AND_TOKEN_LENGTH
         val emergency = decodeEmergency(bytes[EMERGENCY_OFFSET])
-        val sensorFault =
+        val sensorFaultCategory =
             when (bytes[SENSOR_FAULT_OFFSET].toInt().toChar()) {
-                '0' -> false
-                '1', '2' -> true
+                '0' -> null
+                '1' -> GateSensorFaultCategory.GENERAL
+                '2' -> GateSensorFaultCategory.CHILD
                 else -> throw invalidStatusField("sensor error", SENSOR_FAULT_OFFSET, bytes[SENSOR_FAULT_OFFSET], "0x30..0x32")
             }
         val power =
@@ -117,7 +125,12 @@ internal object PuloonPayloadCodec {
             entryCount = decodeDecimal(bytes, 1, 2, "entry count"),
             exitCount = decodeDecimal(bytes, 3, 2, "exit count"),
             emergency = emergency,
-            sensors = GateSensorStatus(emptySet(), sensorFault),
+            sensors =
+                GateSensorStatus(
+                    active = emptySet(),
+                    hasFault = sensorFaultCategory != null,
+                    faultCategory = sensorFaultCategory,
+                ),
             power = power,
             passageResult = decodePassageResult(bytes[5], revision),
             entryError = decodePassageError(bytes[6]),
@@ -128,7 +141,8 @@ internal object PuloonPayloadCodec {
             inputs = decodeBitFields(bytes, offset = 13, byteCount = 8, base = 0x30, name = "input status"),
             tokenPathACount = if (hasTokenData) decodeDecimal(bytes, tokenOffset, 2, "token path A count") else null,
             tokenPathBCount = if (hasTokenData) decodeDecimal(bytes, tokenOffset + 2, 2, "token path B count") else null,
-            returnCupOccupied = returnCupValue?.let { it == 1 },
+            returnCupSignalActive = returnCupValue?.let { it == 1 },
+            returnCupOccupied = null,
             observedAt = Clock.System.now(),
         )
     }
@@ -141,6 +155,7 @@ internal object PuloonPayloadCodec {
         require(bytes.size == SENSOR_TEXT_LENGTH) { "Puloon sensor payload must contain exactly $SENSOR_TEXT_LENGTH bytes" }
         val active = mutableSetOf<GateSensorId>()
         val faulted = mutableSetOf<GateSensorId>()
+        var anyFaultBit = false
         bytes.take(SENSOR_BITMAP_LENGTH).forEachIndexed { index, byte ->
             val nibble = decodeOffsetNibble(byte, 0x30, "sensor", index)
             val childSensorsDisabled =
@@ -153,16 +168,18 @@ internal object PuloonPayloadCodec {
         }
         bytes.copyOfRange(SENSOR_BITMAP_LENGTH, SENSOR_TEXT_LENGTH).forEachIndexed { index, byte ->
             val nibble = decodeOffsetNibble(byte, 0x30, "sensor error", SENSOR_BITMAP_LENGTH + index)
+            anyFaultBit = anyFaultBit || nibble != 0
             repeat(BITS_PER_NIBBLE) { bit ->
                 if (nibble and (1 shl bit) != 0) sensorId(index, bit, hardware)?.let(faulted::add)
             }
         }
-        return GateSensorStatus(active.toSet(), hasFault = faulted.isNotEmpty(), faulted = faulted.toSet())
+        return GateSensorStatus(active.toSet(), hasFault = anyFaultBit, faulted = faulted.toSet())
     }
 
     /** Encodes a controller-local clock as exactly `yyMMddHHmmss`. */
     fun encodeClock(clock: GateClock): ByteArray =
         clock.dateTime.run {
+            require(year in 2000..2099) { "Puloon clock year must be between 2000 and 2099" }
             buildString(CLOCK_TEXT_LENGTH) {
                 appendPadded(year % 100)
                 appendPadded(month.ordinal + 1)
@@ -214,9 +231,14 @@ internal object PuloonPayloadCodec {
             "Puloon door timing payload must contain exactly $DOOR_TIMING_RESPONSE_LENGTH bytes"
         }
         require(bytes[0] == ascii('1')) { "Puloon door timing read response must use selector 1" }
+        val opening = PuloonOffsetHexCodec.decode(bytes, 1, "opening delay")
+        val closing = PuloonOffsetHexCodec.decode(bytes, 3, "closing delay")
+        require(opening in 0..MAX_DOOR_DELAY_UNITS && closing in 0..MAX_DOOR_DELAY_UNITS) {
+            "Puloon door timing values must be between 0 and $MAX_DOOR_DELAY_UNITS units"
+        }
         return GateDoorTiming(
-            openingDelay = (PuloonOffsetHexCodec.decode(bytes, 1, "opening delay") * DELAY_STEP_MILLISECONDS).milliseconds,
-            closingDelay = (PuloonOffsetHexCodec.decode(bytes, 3, "closing delay") * DELAY_STEP_MILLISECONDS).milliseconds,
+            openingDelay = (opening * DELAY_STEP_MILLISECONDS).milliseconds,
+            closingDelay = (closing * DELAY_STEP_MILLISECONDS).milliseconds,
         )
     }
 
@@ -247,7 +269,7 @@ internal object PuloonPayloadCodec {
                         1 ->
                             when {
                                 hardware.mechanism == GateMechanism.SWING -> 23
-                                GateModule.TOKEN_CONTROL_UNIT in hardware.modules -> TOKEN_PATH_A_SENSOR_ID
+                                hardware.hasV28TokenControlUnit() -> TOKEN_PATH_A_SENSOR_ID
                                 else -> null
                             }
                         2 -> 11
@@ -262,7 +284,7 @@ internal object PuloonPayloadCodec {
                         else ->
                             when {
                                 hardware.mechanism == GateMechanism.SWING -> 24
-                                GateModule.TOKEN_CONTROL_UNIT in hardware.modules -> TOKEN_PATH_B_SENSOR_ID
+                                hardware.hasV28TokenControlUnit() -> TOKEN_PATH_B_SENSOR_ID
                                 else -> null
                             }
                     }
@@ -279,7 +301,7 @@ internal object PuloonPayloadCodec {
         when {
             hardware.site == GateSite.CHINA && GateModule.CHILD_SENSORS in hardware.modules ->
                 intArrayOf(10, 20, 21, 22)[bit]
-            hardware.isIndia() && GateModule.TOKEN_CONTROL_UNIT in hardware.modules ->
+            hardware.hasV28TokenControlUnit() ->
                 when (bit) {
                     2 -> 21
                     3 -> 22
@@ -287,6 +309,12 @@ internal object PuloonPayloadCodec {
                 }
             else -> null
         }
+
+    private fun GateHardwareProfile.hasV28TokenControlUnit(): Boolean =
+        protocolRevision == GateProtocolRevision.V2_8 &&
+            mechanism == GateMechanism.SECTOR &&
+            isIndia() &&
+            GateModule.TOKEN_CONTROL_UNIT in modules
 
     private fun decodePassageResult(
         byte: Byte,
@@ -460,6 +488,7 @@ internal object PuloonPayloadCodec {
     private const val STANDBY_RESPONSE_LENGTH = 5
     private const val DOOR_TIMING_RESPONSE_LENGTH = 5
     private const val DELAY_STEP_MILLISECONDS = 100
+    private const val MAX_DOOR_DELAY_UNITS = 10
     private const val DECIMAL_BASE = 10
     private const val HEX_BASE = 16
     private const val BITS_PER_NIBBLE = 4
@@ -467,8 +496,9 @@ internal object PuloonPayloadCodec {
     private const val PASS_MODE_BASE = 0x30
     private const val UPS_ONLINE_MASK = 0x08
     private const val UPS_BATTERY_MASK = 0x01
-    private const val TOKEN_PATH_A_SENSOR_ID = 25
-    private const val TOKEN_PATH_B_SENSOR_ID = 26
-    private val STATUS_LENGTHS =
+    private const val TOKEN_PATH_A_SENSOR_ID = 23
+    private const val TOKEN_PATH_B_SENSOR_ID = 24
+    private val V25_STATUS_LENGTHS = setOf(STATUS_BASE_LENGTH, STATUS_WITH_UPS_LENGTH)
+    private val V28_STATUS_LENGTHS =
         setOf(STATUS_BASE_LENGTH, STATUS_WITH_UPS_LENGTH, STATUS_WITH_TOKEN_LENGTH, STATUS_WITH_UPS_AND_TOKEN_LENGTH)
 }

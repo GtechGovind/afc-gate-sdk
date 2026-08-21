@@ -25,6 +25,7 @@ import com.qurkos.gate.sdk.GateCapability
 import com.qurkos.gate.sdk.GateClock
 import com.qurkos.gate.sdk.GateCommandOutcome
 import com.qurkos.gate.sdk.GateConnectionState
+import com.qurkos.gate.sdk.GateControllerVariant
 import com.qurkos.gate.sdk.GateDeviceConfig
 import com.qurkos.gate.sdk.GateDiagnostic
 import com.qurkos.gate.sdk.GateDirection
@@ -62,6 +63,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -199,6 +201,7 @@ class ControlPanelController(
             when (val result = gate.connect()) {
                 is GateResult.Success -> {
                     refreshIdentity(gate)
+                    loadControllerSettings(gate)
                     gate.status.value?.let { status -> mutableState.update { it.withHardwareStatus(status) } }
                     if (GateCapability.SENSORS in gate.capabilities) {
                         when (val sensors = gate.readSensors()) {
@@ -330,12 +333,15 @@ class ControlPanelController(
 
                 is GateResult.Failure ->
                     mutableState.update {
+                        val detail =
+                            "${result.error.displayMessage()}. Earlier confirmed commands may already be active; " +
+                                "the parameter block was reloaded from hardware."
                         it
-                            .copy(commandInProgress = false, transientMessage = result.error.displayMessage())
+                            .copy(commandInProgress = false, transientMessage = detail)
                             .appendEvent(
                                 event(
                                     "Configuration failed",
-                                    result.error.displayMessage(),
+                                    detail,
                                     EventSeverity.ERROR,
                                     EventCategory.CONFIGURATION,
                                 ),
@@ -358,7 +364,7 @@ class ControlPanelController(
         val current = mutableState.value
         runDiagnostics(
             current.diagnostics
-                .filter { current.configuration.maintenanceOperationsEnabled || !it.requiresMaintenance }
+                .filterNot { it.requiresMaintenance }
                 .map { it.id },
         )
     }
@@ -572,9 +578,23 @@ class ControlPanelController(
             }
         operations.forEach { operation ->
             val result = operation()
-            if (result is GateResult.Failure) return result
+            if (result is GateResult.Failure) {
+                loadControllerSettings(gate)
+                return result
+            }
         }
+        loadControllerSettings(gate)
         return GateResult.Success(Unit)
+    }
+
+    /** Reads the authoritative parameter block so edits never begin from UI-only defaults. */
+    private suspend fun loadControllerSettings(gate: Gate) {
+        if (GateCapability.SETTINGS !in gate.capabilities) return
+        val result = gate.readSettings()
+        if (result !is GateResult.Success) return
+        val configuration = mutableState.value.configuration.withControllerSettings(result.value)
+        savedConfiguration = configuration
+        mutableState.update { current -> current.copy(configuration = configuration) }
     }
 
     private suspend fun animatePassage(
@@ -759,7 +779,7 @@ class ControlPanelController(
                         supportedCapabilities = support.capabilities,
                         supportedPassModes = support.passModes,
                         supportedSafetyRegions = support.safetyRegions.map { it.number }.toSet(),
-                        diagnostics = diagnosticsFor(support.capabilities, configuration.tokenControlUnitInstalled),
+                        diagnostics = diagnosticsFor(support.capabilities),
                         configuration =
                             current.configuration.copy(
                                 passageMode = passageMode?.name ?: current.configuration.passageMode,
@@ -802,7 +822,7 @@ class ControlPanelController(
                     }
                 }
                 launch {
-                    gate.status.collectLatest { status ->
+                    gate.status.collect { status ->
                         if (status != null && gate.connectionState.value == GateConnectionState.CONNECTED) {
                             mutableState.update { it.withHardwareStatus(status) }
                             if (GateCapability.SENSORS in gate.capabilities) {
@@ -1031,11 +1051,19 @@ private fun GateConfigurationUi.normalizedProfile(): GateConfigurationUi =
                 childSensorsInstalled = false,
                 childDetectionLevel = "0",
             )
-    }.let { if (it.mechanism == "SWING") it.copy(normalOpenMode = false) else it }
+    }.let {
+        when {
+            it.mechanism == "SWING" ->
+                it.copy(normalOpenMode = false, controllerVariant = "STANDARD", tokenControlUnitInstalled = false)
+            it.protocolRevision == "V2_5" -> it.copy(tokenControlUnitInstalled = false)
+            else -> it
+        }
+    }
 
 private fun GateConfigurationUi.toHardwareProfile(): GateHardwareProfile? {
     val revision = GateProtocolRevision.entries.firstOrNull { it.name == protocolRevision } ?: return null
     val mechanism = GateMechanism.entries.firstOrNull { it.name == this.mechanism } ?: return null
+    val controllerVariant = GateControllerVariant.entries.firstOrNull { it.name == this.controllerVariant } ?: return null
     val site = GateSite.entries.firstOrNull { it.name == this.site } ?: return null
     val modules =
         buildSet {
@@ -1045,6 +1073,7 @@ private fun GateConfigurationUi.toHardwareProfile(): GateHardwareProfile? {
         }
     return GateHardwareProfile(
         mechanism = mechanism,
+        controllerVariant = controllerVariant,
         site = site,
         modules = modules,
         normalOpen = normalOpenMode,
@@ -1055,6 +1084,7 @@ private fun GateConfigurationUi.toHardwareProfile(): GateHardwareProfile? {
 private data class ConnectionFacts(
     val protocolRevision: String,
     val mechanism: String,
+    val controllerVariant: String,
     val site: String,
     val ups: Boolean,
     val tcu: Boolean,
@@ -1071,6 +1101,7 @@ private fun GateConfigurationUi.connectionFacts(): ConnectionFacts =
     ConnectionFacts(
         protocolRevision,
         mechanism,
+        controllerVariant,
         site,
         upsInstalled,
         tokenControlUnitInstalled,
@@ -1093,6 +1124,55 @@ private data class ParsedControllerConfiguration(
     val closingDelay: Long,
     val settings: Set<GateSetting>,
 )
+
+/** Applies the controller's complete parameter block while preserving connection-only form values. */
+private fun GateConfigurationUi.withControllerSettings(settings: Set<GateSetting>): GateConfigurationUi =
+    copy(
+        normalOpenMode = settings.filterIsInstance<GateSetting.NormalOpenMode>().singleOrNull()?.enabled ?: normalOpenMode,
+        noEntryTimeoutSeconds =
+            settings
+                .filterIsInstance<GateSetting.NoEntryTimeout>()
+                .singleOrNull()
+                ?.value
+                ?.inWholeSeconds
+                ?.toString()
+                ?: noEntryTimeoutSeconds,
+        childDetectionLevel =
+            settings
+                .filterIsInstance<GateSetting.ChildDetection>()
+                .singleOrNull()
+                ?.level
+                ?.toString() ?: childDetectionLevel,
+        tailingSensitivity =
+            settings
+                .filterIsInstance<GateSetting.TailingSensitivity>()
+                .singleOrNull()
+                ?.level
+                ?.toString() ?: tailingSensitivity,
+        hurryUpLevel =
+            settings
+                .filterIsInstance<GateSetting.HurryUpLevel>()
+                .singleOrNull()
+                ?.level
+                ?.toString() ?: hurryUpLevel,
+        tagTimeoutFromLastTag =
+            settings.filterIsInstance<GateSetting.TagTimeoutFromLastTag>().singleOrNull()?.enabled ?: tagTimeoutFromLastTag,
+        buzzerTimeoutUnits =
+            settings
+                .filterIsInstance<GateSetting.BuzzerTimeoutUnits>()
+                .singleOrNull()
+                ?.value
+                ?.toString() ?: buzzerTimeoutUnits,
+        safetyRegionTimeoutSeconds =
+            settings
+                .filterIsInstance<GateSetting.SafetyRegionTimeout>()
+                .singleOrNull()
+                ?.value
+                ?.inWholeSeconds
+                ?.toString()
+                ?: "255",
+        hasUnsavedChanges = false,
+    )
 
 /** Centralizes validation of the editable text form before any serial write is attempted. */
 @Suppress("CyclomaticComplexMethod", "ReturnCount") // Fail-fast validation identifies the exact invalid field.

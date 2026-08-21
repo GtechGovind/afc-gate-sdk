@@ -9,6 +9,7 @@ select `GateVendor.PULOON` and continue using the common `Gate` interface.
 
 ```kotlin
 import com.qurkos.gate.sdk.GateDeviceConfig
+import com.qurkos.gate.sdk.GateControllerVariant
 import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
@@ -25,6 +26,7 @@ val result = GateSdk.create(
         serial = SerialConnectionConfig(SerialPortName("COM4")),
         hardware = GateHardwareProfile(
             mechanism = GateMechanism.SECTOR,
+            controllerVariant = GateControllerVariant.BLDC,
             site = GateSite.KOLKATA_INDIA,
             modules = setOf(GateModule.UPS),
             protocolRevision = GateProtocolRevision.V2_8,
@@ -52,7 +54,9 @@ gate.rejectPassage(GateDirection.EXIT)
 gate.setEmergency(true)
 ```
 
-India profiles additionally support multi-person passage, lamp selection, invalid-ticket rejection, and clock operations. Kolkata also enables standby policy. UPS shutdown is enabled only when `GateModule.UPS` is present.
+India profiles additionally support multi-person passage, lamp selection, and clock operations. Invalid-ticket rejection
+is advertised only for `GateControllerVariant.BLDC` SectorDoor controllers. Kolkata also enables standby policy. UPS
+shutdown is enabled only when `GateModule.UPS` is present.
 
 ## Command coverage
 
@@ -65,7 +69,7 @@ India profiles additionally support multi-person passage, lamp selection, invali
 | `refreshStatus` | `S` | Base |
 | `setPassMode` | `D` | Base |
 | `setSafetyRegion` | `G` | Base; legal region depends on mechanism |
-| `clearPassageCounters` | `C` | Maintenance opt-in |
+| `clearPassageCounters` | `C` | Maintenance opt-in; also closes the barrier |
 | `readSensors` | `H` | Base |
 | `readClock`, `setClock` | `X` | India profiles |
 | `setUpsShutdownDelaySeconds` | `Y` | UPS module |
@@ -81,10 +85,11 @@ Maintenance operations are disabled by default. Set `maintenanceOperationsEnable
 
 | Area | V2.5 | V2.8 | SDK behavior |
 | --- | --- | --- | --- |
-| Framing, sequence, retry, CRC | Documented raw little-endian fields | Same | One strict frame codec for both revisions |
+| Framing, sequence, retry, CRC | PDF example shows raw fields; shipped PGcuTp uses offset nibbles | Same conflict | SDK follows both shipped PGcuTp versions: one-byte sequence as two offset nibbles and retry as one offset nibble |
 | Passage result | Seven direction-neutral values (`0`–`6`) | Expanded directional values (`0`–`9`, `@`) | Revision-specific typed result mapping |
 | Physical sensor bits | Active-low | Active-low | A cleared bit is reported as active; fault bits remain active-high |
-| Status length | 23 base, 27 with UPS | 23 base; TCU adds six and UPS adds four bytes | Safely accepts and validates 23/27/29/33 bytes |
+| Status length | 23 base, 27 with UPS | 23 base; TCU adds six and UPS adds four bytes | V2.5 accepts 23/27; V2.8 accepts validated 23/27/29/33 bytes |
+| TCU sensor bank | Not available | SectorDoor sensors 21–24 | TCU profiles are rejected unless V2.8 SectorDoor is selected |
 | Door timing `U/1102` | Not available | Available | Capability and transaction rejected on V2.5 |
 | Standby `U/2402` | Not available | Available on Kolkata profile | Capability and transaction rejected on V2.5 |
 | Return-cup lamp diagnostic | Not available | Available with TCU | Rejected unless V2.8 and TCU are selected |
@@ -132,22 +137,29 @@ The fixed `S` block is decoded as follows:
 | 23 | 4 | optional UPS | raw online/battery bits plus decimal `00`–`99` or `FF` charge |
 | 23 or 27 | 6 | optional TCU | two decimal counters and return-cup state `00`/`01` |
 
-Puloon profiles are rejected before connection when they request a FLAP mechanism, SwingDoor normal-open mode, UPS or
-TCU outside India, or child sensors outside China. `GateSdk.support(config)` uses the same validation, so applications
+Puloon profiles are rejected before connection when they request a FLAP mechanism, BLDC outside SectorDoor, SwingDoor
+normal-open mode, UPS or TCU outside India, TCU outside V2.8 SectorDoor, or child sensors outside China.
+`GateSdk.support(config)` uses the same validation, so applications
 cannot accidentally render options that the configured hardware cannot execute.
 
 Document inconsistencies are handled explicitly. The DateTime response diagram identifies command `P` even
 though the command list and request use `X`, so responses using either byte are accepted. The open/close-delay examples
 say “10 seconds,” but their stated 0.1-second unit and maximum are one second; the implementation follows the stated
 range and unit (`0`–`1000 ms`, in `100 ms` steps). V2.8's base status length text does not account for its documented
-six-byte TCU suffix, so the decoder derives suffix presence from the received, validated 23/27/29/33-byte length instead
+six-byte TCU suffix, so the V2.8 decoder derives suffix presence from the received, validated 23/27/29/33-byte length instead
 of trusting that contradictory total.
+
+The V2.8 documents constrain return-cup state to `00` or `01` but do not define which value means occupied. The SDK
+therefore exposes `returnCupSignalActive` and leaves `returnCupOccupied` null until an installation has calibrated the
+polarity from physical observation. It never converts an undocumented assumption into a safety decision.
 
 ## Status and reconnect behavior
 
 `connect()` reports success only after the serial port opens and a valid `S` status response is decoded. The SDK then polls status at the configured interval; Puloon requires at least 101 milliseconds. Set `statusPollInterval = null` to disable background polling and call `refreshStatus()` explicitly.
 
-Read-only requests may be retried according to `readRetries`. Passage, emergency, reset, diagnostics, clock, mode, timing, and settings writes are never retried or replayed after a reconnect.
+Read-only requests may be retried according to `readRetries`, except V2.8 TCU status. A TCU status response resets token
+counters, so status is attempted once to prevent a lost first response from being replaced by misleading zero counters.
+Passage, emergency, reset, diagnostics, clock, mode, timing, and settings writes are never retried or replayed after a reconnect.
 
 If a status response violates the selected revision, the protocol error written to the application log includes the field name, zero-based
 payload offset, received byte, accepted range, payload length, and complete hexadecimal status payload. The session also

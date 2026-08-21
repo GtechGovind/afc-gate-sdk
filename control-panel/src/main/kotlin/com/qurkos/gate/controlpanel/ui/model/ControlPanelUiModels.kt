@@ -140,6 +140,7 @@ data class GateTrafficUi(
 data class GateConfigurationUi(
     val protocolRevision: String = "V2_8",
     val mechanism: String = "SECTOR",
+    val controllerVariant: String = "STANDARD",
     val site: String = "GENERIC",
     val upsInstalled: Boolean = false,
     val tokenControlUnitInstalled: Boolean = false,
@@ -178,6 +179,7 @@ data class DiagnosticTestUi(
     val state: DiagnosticState = DiagnosticState.IDLE,
     val result: String? = null,
     val requiredCapability: GateCapability,
+    val requiresHold: Boolean = false,
 )
 
 enum class DiagnosticState { IDLE, RUNNING, PASSED, FAILED }
@@ -375,7 +377,6 @@ private fun sensor(
 @Suppress("LongMethod") // Complete documented diagnostic inventory remains auditable in wire-command order.
 internal fun diagnosticsFor(
     capabilities: Set<GateCapability>,
-    tokenControlUnitInstalled: Boolean,
 ): List<DiagnosticTestUi> =
     listOf(
         DiagnosticTestUi(
@@ -424,6 +425,7 @@ internal fun diagnosticsFor(
             "Clear counts; the controller may close the door",
             true,
             requiredCapability = GateCapability.PASSAGE_COUNTERS,
+            requiresHold = true,
         ),
         DiagnosticTestUi(
             "sensor-bank",
@@ -437,7 +439,7 @@ internal fun diagnosticsFor(
             "Door close test",
             "Run T/02 door-close output",
             true,
-            requiredCapability = GateCapability.DIAGNOSTICS,
+            requiredCapability = GateCapability.RETURN_CUP_DIAGNOSTIC,
         ),
         DiagnosticTestUi("door-free", "Door free test", "Run T/03 door-free output", true, requiredCapability = GateCapability.DIAGNOSTICS),
         DiagnosticTestUi("door-lock", "Door lock test", "Run T/04 door-lock output", true, requiredCapability = GateCapability.DIAGNOSTICS),
@@ -446,7 +448,7 @@ internal fun diagnosticsFor(
             "Green indicator ON",
             "Run T/21 direction indicator output",
             true,
-            requiredCapability = GateCapability.DIAGNOSTICS,
+            requiredCapability = GateCapability.RETURN_CUP_DIAGNOSTIC,
         ),
         DiagnosticTestUi(
             "indicator-green-off",
@@ -551,8 +553,12 @@ internal fun diagnosticsFor(
             "Read parsed online, battery, and charge status",
             requiredCapability = GateCapability.UPS_SHUTDOWN,
         ),
-        DiagnosticTestUi("reset", "Controller reset", "Run the hardware reset operation", true, requiredCapability = GateCapability.RESET),
-    ).filter { test ->
-        test.requiredCapability in capabilities &&
-            (tokenControlUnitInstalled || !test.id.startsWith("return-cup"))
-    }
+        DiagnosticTestUi(
+            "reset",
+            "Controller reset",
+            "Run the hardware reset operation",
+            true,
+            requiredCapability = GateCapability.RESET,
+            requiresHold = true,
+        ),
+    ).filter { test -> test.requiredCapability in capabilities }

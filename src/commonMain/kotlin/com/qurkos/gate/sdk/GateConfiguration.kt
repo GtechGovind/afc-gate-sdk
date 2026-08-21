@@ -159,6 +159,15 @@ public enum class GateMechanism {
     SECTOR,
 }
 
+/** Controller-drive implementation that changes otherwise mechanism-compatible Puloon capabilities. */
+public enum class GateControllerVariant {
+    /** Standard controller used by SectorDoor and SwingDoor configurations. */
+    STANDARD,
+
+    /** Brushless-DC SectorDoor controller with BLDC-specific ticket handling and sensor inputs. */
+    BLDC,
+}
+
 /** Site profile used when a controller protocol exposes regional command variants. */
 public enum class GateSite {
     GENERIC,
@@ -198,6 +207,7 @@ public enum class GateProtocolRevision {
  * status interpretation and must be avoided.
  * @property normalOpen Whether the profile uses the normal-open barrier operating variant.
  * @property protocolRevision Wire-protocol revision implemented by the controller firmware.
+ * @property controllerVariant Controller-drive implementation used to gate BLDC-only behavior.
  */
 public data class GateHardwareProfile(
     public val mechanism: GateMechanism = GateMechanism.SECTOR,
@@ -205,6 +215,7 @@ public data class GateHardwareProfile(
     public val modules: Set<GateModule> = emptySet(),
     public val normalOpen: Boolean = false,
     public val protocolRevision: GateProtocolRevision = GateProtocolRevision.V2_8,
+    public val controllerVariant: GateControllerVariant = GateControllerVariant.STANDARD,
 )
 
 /**

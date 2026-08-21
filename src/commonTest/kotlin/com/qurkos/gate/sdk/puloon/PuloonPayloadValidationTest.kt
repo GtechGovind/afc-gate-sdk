@@ -6,6 +6,7 @@ import com.qurkos.gate.sdk.GateModule
 import com.qurkos.gate.sdk.GatePassMode
 import com.qurkos.gate.sdk.GatePassageResult
 import com.qurkos.gate.sdk.GateProtocolRevision
+import com.qurkos.gate.sdk.GateSensorFaultCategory
 import com.qurkos.gate.sdk.GateSetting
 import com.qurkos.gate.sdk.GateSite
 import com.qurkos.gate.sdk.internal.puloon.PuloonOffsetHexCodec
@@ -77,13 +78,25 @@ class PuloonPayloadValidationTest {
         assertEquals(true, power.onBattery)
         assertEquals(12, decoded.tokenPathACount)
         assertEquals(34, decoded.tokenPathBCount)
-        assertTrue(decoded.returnCupOccupied == true)
+        assertTrue(decoded.returnCupSignalActive == true)
+        assertNull(decoded.returnCupOccupied)
         val temporarilyMissingSuffixes = PuloonPayloadCodec.decodeStatus(baseStatus(), hardware)
         assertNull(temporarilyMissingSuffixes.power)
         assertNull(temporarilyMissingSuffixes.tokenPathACount)
         val noModules = PuloonPayloadCodec.decodeStatus(baseStatus(), GateHardwareProfile())
         assertNull(noModules.power)
         assertFalse(noModules.sensors.hasFault)
+    }
+
+    @Test
+    fun v25RejectsV28TokenCounterSuffixes() {
+        val tokenSuffix = "123401".encodeToByteArray()
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeStatus(
+                baseStatus() + tokenSuffix,
+                GateHardwareProfile(protocolRevision = GateProtocolRevision.V2_5),
+            )
+        }
     }
 
     @Test
@@ -102,6 +115,21 @@ class PuloonPayloadValidationTest {
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeStatus(baseStatus() + "000002".encodeToByteArray(), hardware)
         }
+    }
+
+    @Test
+    fun statusPreservesGeneralAndChildSensorFaultCategories() {
+        val general = baseStatus().also { it[22] = ascii('1') }
+        val child = baseStatus().also { it[22] = ascii('2') }
+
+        assertEquals(
+            GateSensorFaultCategory.GENERAL,
+            PuloonPayloadCodec.decodeStatus(general, GateHardwareProfile()).sensors.faultCategory,
+        )
+        assertEquals(
+            GateSensorFaultCategory.CHILD,
+            PuloonPayloadCodec.decodeStatus(child, GateHardwareProfile()).sensors.faultCategory,
+        )
     }
 
     @Test
@@ -138,6 +166,20 @@ class PuloonPayloadValidationTest {
                 GateHardwareProfile(site = GateSite.CHINA, modules = setOf(GateModule.CHILD_SENSORS)),
             )
         assertTrue(child.active.any { it.number == 22 })
+
+        val tokenBytes = byteArrayOf(0x3F, 0x3F, 0x3D, 0x3F, 0x37, 0x33) + "000000".encodeToByteArray()
+        val tokenProfile =
+            GateHardwareProfile(
+                site = GateSite.INDIA,
+                protocolRevision = GateProtocolRevision.V2_8,
+                modules = setOf(GateModule.TOKEN_CONTROL_UNIT),
+            )
+        assertEquals(
+            setOf(21, 22, 23, 24),
+            PuloonPayloadCodec.decodeSensors(tokenBytes, tokenProfile).active.mapTo(mutableSetOf()) { it.number },
+        )
+        val legacy = tokenProfile.copy(protocolRevision = GateProtocolRevision.V2_5)
+        assertTrue(PuloonPayloadCodec.decodeSensors(tokenBytes, legacy).active.isEmpty())
     }
 
     @Test
@@ -151,6 +193,16 @@ class PuloonPayloadValidationTest {
     }
 
     @Test
+    fun unmappedRawFaultBitsStillPublishAggregateFault() {
+        val response = "??????000001".encodeToByteArray()
+
+        val decoded = PuloonPayloadCodec.decodeSensors(response, GateHardwareProfile())
+
+        assertTrue(decoded.hasFault)
+        assertTrue(decoded.faulted.isEmpty())
+    }
+
+    @Test
     fun passageResultUsesTheSelectedProtocolRevision() {
         val legacy = GateHardwareProfile(protocolRevision = GateProtocolRevision.V2_5)
         val current = GateHardwareProfile(protocolRevision = GateProtocolRevision.V2_8)
@@ -160,6 +212,48 @@ class PuloonPayloadValidationTest {
         assertEquals(GatePassageResult.EXIT_COMPLETED, PuloonPayloadCodec.decodeStatus(resultTwo, current).passageResult)
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeStatus(baseStatus().also { it[5] = ascii('7') }, legacy)
+        }
+    }
+
+    @Test
+    fun passageResultDecodesEveryDocumentedValueForBothRevisions() {
+        val legacyExpected =
+            listOf(
+                GatePassageResult.IDLE,
+                GatePassageResult.PASSAGE_COMPLETED,
+                GatePassageResult.NO_ENTRY_TIMEOUT,
+                GatePassageResult.PASSING_TIMEOUT,
+                GatePassageResult.EXIT_TIMEOUT,
+                GatePassageResult.TAILING_USED,
+                GatePassageResult.WRONG_WAY_USED,
+            )
+        legacyExpected.forEachIndexed { index, expected ->
+            val payload = baseStatus().also { it[5] = ascii(('0'.code + index).toChar()) }
+            assertEquals(
+                expected,
+                PuloonPayloadCodec
+                    .decodeStatus(payload, GateHardwareProfile(protocolRevision = GateProtocolRevision.V2_5))
+                    .passageResult,
+            )
+        }
+        val currentExpected =
+            listOf(
+                GatePassageResult.IDLE,
+                GatePassageResult.ENTRY_COMPLETED,
+                GatePassageResult.EXIT_COMPLETED,
+                GatePassageResult.ENTRY_TIMEOUT,
+                GatePassageResult.EXIT_TIMEOUT,
+                GatePassageResult.ENTRY_PRE_DOOR_TIMEOUT,
+                GatePassageResult.EXIT_PRE_DOOR_TIMEOUT,
+                GatePassageResult.ENTRY_TAILGATE_USED,
+                GatePassageResult.EXIT_TAILGATE_USED,
+                GatePassageResult.ENTRY_WRONG_WAY_USED,
+                GatePassageResult.EXIT_WRONG_WAY_USED,
+            )
+        currentExpected.forEachIndexed { index, expected ->
+            val wire = if (index == 10) '@' else ('0'.code + index).toChar()
+            val payload = baseStatus().also { it[5] = ascii(wire) }
+            assertEquals(expected, PuloonPayloadCodec.decodeStatus(payload, GateHardwareProfile()).passageResult)
         }
     }
 
@@ -201,6 +295,9 @@ class PuloonPayloadValidationTest {
         }
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeDoorTiming(byteArrayOf(ascii('0'), ascii('0'), ascii('0'), ascii('0'), ascii('0')))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PuloonPayloadCodec.decodeDoorTiming(byteArrayOf(ascii('1'), ascii('0'), ascii(';'), ascii('0'), ascii('0')))
         }
     }
 

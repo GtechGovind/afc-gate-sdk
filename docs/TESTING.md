@@ -5,8 +5,8 @@ serial transport, session concurrency and recovery behavior, Puloon golden frame
 malformed payloads, defensive copies, bounded buffers, all documented command groups, and JVM boundary behavior that does
 not require an open port.
 
-The suite also covers concurrent callers, explicit reconnect versus pending automatic reconnect, initial-open recovery,
-caller cancellation, sequence wrap, maximum frame size, sustained fragmented decoding, strict field parsing, settings
+The suite also covers concurrent callers, explicit reconnect versus pending automatic reconnect, safe initial-open failure,
+caller cancellation, vendor-header sequence wrap, delimiter-collision counters, maximum frame size, sustained fragmented decoding, strict field parsing, settings
 completeness/uniqueness/ranges, hardware-profile capability snapshots, all pass modes, and mechanism-specific boundaries.
 
 Run the production gate locally:
@@ -35,6 +35,11 @@ Real-device tests must remain opt-in and excluded from ordinary `check`. A contr
 
 Never run actuator or reset tests on an in-service passenger gate. HIL fixtures must include emergency-stop procedures and
 restore the controller to a documented baseline after each test.
+
+No synthetic suite can certify physical interoperability. A release may be deterministic-CI complete while remaining
+pending site commissioning for serial electrical behavior, return-cup polarity, sensor wiring, and actuator timing. Record
+raw request/response captures and approved firmware identifiers as commissioning evidence; do not describe an uncommissioned
+build as hardware-certified.
 
 ## ABI changes
 

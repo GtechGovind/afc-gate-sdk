@@ -22,6 +22,19 @@ repositories {
     mavenCentral()
 }
 
+// Build-tool-only transitive dependencies are pinned above known vulnerable ranges. They are not shipped in SDK/runtime
+// artifacts, but securing Dokka and ktlint protects developer and CI machines that process repository-controlled input.
+configurations.configureEach {
+    resolutionStrategy.force(
+        "com.fasterxml.jackson.core:jackson-core:${libs.versions.jackson.get()}",
+        "com.fasterxml.jackson.core:jackson-databind:${libs.versions.jackson.get()}",
+        "com.fasterxml.jackson.core:jackson-annotations:${libs.versions.jackson.get()}",
+        "org.jsoup:jsoup:${libs.versions.jsoup.get()}",
+        "ch.qos.logback:logback-core:${libs.versions.logback.get()}",
+        "ch.qos.logback:logback-classic:${libs.versions.logback.get()}",
+    )
+}
+
 kotlin {
     explicitApi()
     jvmToolchain(17)

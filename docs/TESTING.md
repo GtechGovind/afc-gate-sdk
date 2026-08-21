@@ -55,7 +55,8 @@ Reproduce IntelliJ's Kotlin Multiplatform dependency-resolution path from a term
 ```
 
 Gradle configuration caching is intentionally disabled because Kotlin Multiplatform's IDE dependency resolver currently
-retains Gradle model objects that cannot be serialized. Ordinary build caching and parallel execution remain enabled.
+retains Gradle model objects that cannot be serialized. Build-output caching is also disabled while the stable Kotlin
+plugin line remains below the build-cache deserialization fix; parallel execution remains enabled.
 
 Checksum-based Gradle dependency verification is intentionally not enabled because IntelliJ resolves additional source
 variants during import. Dependency versions remain locked; review changes to both lockfiles during dependency upgrades.

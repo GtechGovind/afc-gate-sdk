@@ -24,6 +24,8 @@ tools. Recompile consumers and explicitly select `controllerVariant = BLDC` only
   Swing safety-region preflight validation.
 - Hardened releases so tags must already be reachable from `main`, checksum files use exact asset basenames, and native
   installer filenames are stable across GitHub upload normalization.
+- Constrained vulnerable Dokka/ktlint-only Jackson, jsoup, and Logback transitives. Disabled Gradle build-output caching
+  to mitigate Kotlin's build-cache deserialization advisory without forcing a prerelease Kotlin runtime on consumers.
 
 ## 2.0.0 - 2026-08-21
 

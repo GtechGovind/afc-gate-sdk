@@ -10,6 +10,9 @@ kover = "0.9.9"
 compose = "1.11.1"
 compose-material3 = "1.11.0-alpha07"
 compose-material-icons = "1.7.3"
+jackson = "2.18.9"
+jsoup = "1.23.1"
+logback = "1.5.34"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }

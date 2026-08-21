@@ -3,6 +3,12 @@ package com.qurkos.gate.controlpanel.app
 import com.qurkos.gate.controlpanel.ui.model.EventSeverity
 import com.qurkos.gate.controlpanel.ui.model.GateEventUi
 import com.qurkos.gate.controlpanel.ui.model.GateTrafficUi
+import com.qurkos.gate.sdk.GateDeviceConfig
+import com.qurkos.gate.sdk.GateEvent
+import com.qurkos.gate.sdk.GateSensorStatus
+import com.qurkos.gate.sdk.GateStatus
+import com.qurkos.gate.sdk.GateSupport
+import com.qurkos.gate.sdk.ReconnectPolicy
 import java.awt.Desktop
 import java.io.File
 import java.io.PrintWriter
@@ -12,6 +18,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.logging.ConsoleHandler
 import java.util.logging.FileHandler
@@ -33,6 +40,18 @@ internal object ApplicationLogging {
     fun logger(name: String): Logger = rotatingLogger.logger(name)
 
     fun logger(owner: Class<*>): Logger = logger(owner.name)
+
+    fun runtimeSummary(): String {
+        val packageVersion = ApplicationLogging::class.java.`package`.implementationVersion ?: "development"
+        return "version=${packageVersion.logValue()} " +
+            "osName=${System.getProperty("os.name", "unknown").logValue()} " +
+            "osVersion=${System.getProperty("os.version", "unknown").logValue()} " +
+            "architecture=${System.getProperty("os.arch", "unknown").logValue()} " +
+            "javaVersion=${System.getProperty("java.version", "unknown").logValue()} " +
+            "javaVendor=${System.getProperty("java.vendor", "unknown").logValue()} " +
+            "locale=${Locale.getDefault().toLanguageTag().logValue()} " +
+            "timezone=${ZoneId.systemDefault().id.logValue()}"
+    }
 
     fun openDirectory() {
         val logDirectory = directory
@@ -161,6 +180,56 @@ internal fun Logger.traffic(traffic: GateTrafficUi) {
     )
 }
 
+internal fun Logger.sdkEvent(event: GateEvent) {
+    when (event) {
+        is GateEvent.ConnectionChanged -> info("serialLifecycle state=${event.state.name}")
+        is GateEvent.ProtocolWarning -> warning("protocolDiagnostic detail=${event.message.logValue()}")
+        is GateEvent.ReconnectAttempt -> info("serialReconnect attempt=${event.attempt}")
+        is GateEvent.StatusChanged -> fine(event.status.diagnosticLogMessage())
+        is GateEvent.CommandSent, is GateEvent.ResponseReceived -> Unit // Recorded by traffic().
+    }
+}
+
+internal fun GateDeviceConfig.diagnosticLogMessage(): String {
+    val parameters = requireNotNull(serial.parameters)
+    val reconnect =
+        when (val policy = runtime.reconnectPolicy) {
+            ReconnectPolicy.Disabled -> "disabled"
+            is ReconnectPolicy.ExponentialBackoff ->
+                "exponential(initialMs=${policy.initialDelay.inWholeMilliseconds}," +
+                    "maximumMs=${policy.maximumDelay.inWholeMilliseconds},multiplier=${policy.multiplier})"
+        }
+    return "gateConfiguration vendor=${vendor.name} port=${serial.port.value.logValue()} " +
+        "baud=${parameters.baudRate} dataBits=${parameters.dataBits} stopBits=${parameters.stopBits.name} " +
+        "parity=${parameters.parity.name} mechanism=${hardware.mechanism.name} site=${hardware.site.name} " +
+        "modules=${hardware.modules.map { it.name }.sorted()} normalOpen=${hardware.normalOpen} " +
+        "responseTimeoutMs=${runtime.responseTimeout.inWholeMilliseconds} readRetries=${runtime.readRetries} " +
+        "statusPollMs=${runtime.statusPollInterval?.inWholeMilliseconds ?: "disabled"} reconnect=$reconnect " +
+        "maintenance=$maintenanceOperationsEnabled"
+}
+
+internal fun GateSupport.diagnosticLogMessage(): String =
+    "gateSupport capabilities=${capabilities.map { it.name }.sorted()} " +
+        "passModes=${passModes.map { it.name }.sorted()} " +
+        "safetyRegions=${safetyRegions.map { it.number }.sorted()} " +
+        "sensors=${sensors.map { it.number }.sorted()}"
+
+internal fun GateStatus.diagnosticLogMessage(): String =
+    "statusChanged passMode=${passMode.name} entryCount=$entryCount exitCount=$exitCount " +
+        "passageResult=${passageResult.name} entryError=${entryError.name} exitError=${exitError.name} " +
+        "emergency=${emergency.name} sensorFault=${sensors.hasFault} " +
+        "activeSensors=${sensors.active.map { it.number }.sorted()} " +
+        "faultedSensors=${sensors.faulted.map { it.number }.sorted()} " +
+        "doorFaults=${doorFaults.map { it.name }.sorted()} occupiedZones=${occupiedZones.map { it.name }.sorted()} " +
+        "switchesOn=${switches.filterValues { it }.keys.sorted()} inputsOn=${inputs.filterValues { it }.keys.sorted()} " +
+        "upsPresent=${power?.upsPresent ?: false} upsOnline=${power?.online} onBattery=${power?.onBattery} " +
+        "chargePercent=${power?.chargePercent} tokenA=$tokenPathACount tokenB=$tokenPathBCount " +
+        "returnCupOccupied=$returnCupOccupied"
+
+internal fun GateSensorStatus.diagnosticLogMessage(): String =
+    "sensorChanged hasFault=$hasFault active=${active.map { it.number }.sorted()} " +
+        "faulted=${faulted.map { it.number }.sorted()}"
+
 internal fun resolveLogDirectory(
     osName: String,
     userHome: Path,
@@ -222,6 +291,6 @@ private object ApplicationLogFormatter : Formatter() {
         }
 }
 
-private fun String.logValue(): String = "\"${replace("\\", "\\\\").replace("\"", "\\\"").singleLine()}\""
+internal fun String.logValue(): String = "\"${replace("\\", "\\\\").replace("\"", "\\\"").singleLine()}\""
 
 private fun String.singleLine(): String = replace('\r', ' ').replace('\n', ' ')

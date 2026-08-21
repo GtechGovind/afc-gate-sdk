@@ -8,6 +8,9 @@ All notable changes are recorded here. The project follows semantic versioning.
   error code against the SDK implementation.
 - Added actionable rejected-status diagnostics with the exact field, payload offset, received byte, expected range,
   payload length, and full hexadecimal status block.
+- Added deep bounded diagnostic logs for runtime identity, port discovery, hardware/serial configuration, resolved support,
+  lifecycle and reconnect transitions, changed status snapshots, read-attempt timeouts, uncorrelated responses, and
+  malformed-frame metadata/hex.
 - Enforced profile-exact base, UPS, and TCU status lengths and validated emergency, sensor-error, UPS state/charge, token
   counters, and return-cup fields before publishing status.
 - Rejected undocumented Puloon hardware profiles and unsupported standby pass modes before serial I/O so unsupported

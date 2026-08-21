@@ -326,6 +326,7 @@ internal class SerialGateController(
                 is GateOperation.Passage ->
                     "${request.direction.name.lowercase().replaceFirstChar(Char::uppercase)} · " +
                         "${request.passengerCount} passenger${if (request.passengerCount == 1) "" else "s"} · " +
+                        "lamp ${request.lampColor.name.lowercase()} · " +
                         if (request.invalidTicket) "reject" else "authorize"
                 is GateOperation.Emergency -> if (enabled) "Engage emergency release" else "Clear emergency release"
                 GateOperation.Initialize -> "Initialize controller"
@@ -335,7 +336,7 @@ internal class SerialGateController(
                 GateOperation.ClearPassageCounters -> "Clear entry and exit counters"
                 GateOperation.Sensors -> "Read physical sensor inputs"
                 GateOperation.ReadClock -> "Read controller RTC"
-                is GateOperation.SetClock -> "Synchronize controller RTC"
+                is GateOperation.SetClock -> "Synchronize controller RTC to ${clock.dateTime}"
                 is GateOperation.SetUpsShutdownDelay -> "Set UPS shutdown delay to $seconds s"
                 GateOperation.ReadStandbyPolicy -> "Read standby policy"
                 is GateOperation.SetStandbyPolicy ->
@@ -345,7 +346,7 @@ internal class SerialGateController(
                     "Set opening ${timing.openingDelay.inWholeMilliseconds} ms · " +
                         "closing ${timing.closingDelay.inWholeMilliseconds} ms"
                 GateOperation.ReadSettings -> "Read typed settings block"
-                is GateOperation.ApplySettings -> "Apply ${settings.size} typed settings"
+                is GateOperation.ApplySettings -> "Apply settings ${settings.traceSummary()}"
                 is GateOperation.Diagnostic -> "Run ${diagnostic.traceName()} diagnostic"
                 GateOperation.Reset -> "Reset controller"
             }
@@ -354,13 +355,35 @@ internal class SerialGateController(
         when (this) {
             GateResponse.Acknowledged -> "Controller acknowledged"
             is GateResponse.Firmware -> "Firmware ${value.version} received"
-            is GateResponse.Status -> "Status snapshot received"
-            is GateResponse.Sensors -> "Sensor snapshot received"
-            is GateResponse.Clock -> "Controller RTC received"
-            is GateResponse.StandbyPolicy -> "Standby policy received"
-            is GateResponse.DoorTiming -> "Door timing received"
-            is GateResponse.Settings -> "${value.size} typed settings received"
+            is GateResponse.Status ->
+                "Status passMode=${value.passMode.name} entry=${value.entryCount} exit=${value.exitCount} " +
+                    "emergency=${value.emergency.name} sensorFault=${value.sensors.hasFault}"
+            is GateResponse.Sensors ->
+                "Sensors active=${value.active.map { it.number }.sorted()} " +
+                    "faulted=${value.faulted.map { it.number }.sorted()} hasFault=${value.hasFault}"
+            is GateResponse.Clock -> "Controller RTC ${value.dateTime}"
+            is GateResponse.StandbyPolicy ->
+                "Standby timeout=${value.timeout.inWholeSeconds}s passMode=${value.passMode.name}"
+            is GateResponse.DoorTiming ->
+                "Door timing opening=${value.openingDelay.inWholeMilliseconds}ms " +
+                    "closing=${value.closingDelay.inWholeMilliseconds}ms"
+            is GateResponse.Settings -> "Settings ${value.traceSummary()}"
         }
+
+    private fun Set<GateSetting>.traceSummary(): String =
+        map { setting ->
+            when (setting) {
+                is GateSetting.NoEntryTimeout -> "noEntry=${setting.value.inWholeSeconds}s"
+                is GateSetting.NormalOpenMode -> "normalOpen=${setting.enabled}"
+                is GateSetting.HurryUpLevel -> "hurryUp=${setting.level}"
+                is GateSetting.TagTimeoutFromLastTag -> "tagTimeoutFromLast=${setting.enabled}"
+                is GateSetting.TailingSensitivity -> "tailing=${setting.level}"
+                is GateSetting.BuzzerTimeoutUnits -> "buzzer=${setting.value}"
+                is GateSetting.SafetyRegionTimeout ->
+                    "safetyTimeout=${setting.value?.inWholeSeconds?.let { "${it}s" } ?: "disabled"}"
+                is GateSetting.ChildDetection -> "childDetection=${setting.level}"
+            }
+        }.sorted().joinToString(prefix = "[", postfix = "]")
 
     private fun GateDiagnostic.traceName(): String =
         when (this) {

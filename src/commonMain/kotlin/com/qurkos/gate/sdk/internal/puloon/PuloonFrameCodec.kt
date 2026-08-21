@@ -38,6 +38,11 @@ internal class PuloonFrame(
     /** First payload byte used as the GCU command identifier. */
     val command: Byte get() = payloadBytes.first()
 
+    override val diagnosticSummary: String
+        get() =
+            "Puloon command=${command.toInt().toChar()} sequence=$sequence retry=$retry " +
+                "payloadBytes=${payloadBytes.size}"
+
     /** Frame field bounds defined by the Puloon protocol and defensive memory policy. */
     companion object {
         private const val MAX_SEQUENCE = 0xFFFF
@@ -168,7 +173,10 @@ internal class PuloonFrameDecoder : StreamingFrameDecoder {
         return try {
             FrameDecodeResult.Frame(PuloonFrameCodec.decode(candidate))
         } catch (error: IllegalArgumentException) {
-            FrameDecodeResult.Error(error.message ?: "Invalid Puloon frame")
+            FrameDecodeResult.Error(
+                "${error.message ?: "Invalid Puloon frame"}; length=${candidate.size}; " +
+                    "frameHex=${candidate.toDiagnosticHex()}",
+            )
         }
     }
 
@@ -192,6 +200,15 @@ internal class PuloonFrameDecoder : StreamingFrameDecoder {
         const val BUFFER_GROWTH_FACTOR = 2
         const val MINIMUM_END_INDEX = 9
         const val MAX_BUFFER_LENGTH = 8_192
+        const val MAX_DIAGNOSTIC_BYTES = 128
+    }
+
+    private fun ByteArray.toDiagnosticHex(): String {
+        val prefix =
+            take(MAX_DIAGNOSTIC_BYTES).joinToString(" ") { byte ->
+                (byte.toInt() and 0xFF).toString(16).uppercase().padStart(2, '0')
+            }
+        return if (size > MAX_DIAGNOSTIC_BYTES) "$prefix …(+${size - MAX_DIAGNOSTIC_BYTES} bytes)" else prefix
     }
 }
 

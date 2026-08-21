@@ -71,6 +71,8 @@ class PuloonProtocolTest {
 
         assertIs<FrameDecodeResult.Error>(result)
         assertTrue(result.message.contains("CRC"))
+        assertTrue(result.message.contains("length=${bytes.size}"))
+        assertTrue(result.message.contains("frameHex=0A"))
     }
 
     @Test

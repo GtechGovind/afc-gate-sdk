@@ -170,7 +170,10 @@ internal sealed interface GateResponse {
 }
 
 /** Marker implemented by an immutable, validated frame produced by a streaming decoder. */
-internal interface ProtocolFrame
+internal interface ProtocolFrame {
+    /** Non-sensitive correlation metadata for exceptional-session diagnostics. */
+    val diagnosticSummary: String
+}
 
 /** One result produced while incrementally consuming transport bytes. */
 internal sealed interface FrameDecodeResult {

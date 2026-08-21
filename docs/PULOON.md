@@ -127,9 +127,10 @@ range and unit (`0`–`1000 ms`, in `100 ms` steps).
 Read-only requests may be retried according to `readRetries`. Passage, emergency, reset, diagnostics, clock, mode, timing, and settings writes are never retried or replayed after a reconnect.
 
 If a status response violates V2.8, the protocol error written to the application log includes the field name, zero-based
-payload offset, received byte, accepted range, payload length, and complete hexadecimal status payload. This diagnostic is
-emitted only for a rejected response and makes firmware-variant analysis possible without enabling unrestricted serial
-traffic logging.
+payload offset, received byte, accepted range, payload length, and complete hexadecimal status payload. The session also
+records per-attempt timeouts, retry/fail decisions, uncorrelated response command/sequence/retry metadata, and truncated
+malformed-frame hex. These diagnostics make firmware, cabling, noise, and correlation analysis possible without enabling
+unrestricted valid-frame logging.
 
 ## Settings
 

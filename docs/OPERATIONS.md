@@ -34,16 +34,19 @@ usually indicate power, cabling, driver, port ownership, or controller problems.
 
 ## Control-panel log files
 
-The desktop control panel persists safe operational events, semantic command/response traffic, application lifecycle
-messages, and uncaught exceptions. It rotates at 5 MiB and retains seven files. Operators can open the active directory
-from **Event Log → Open log folder**.
+The desktop control panel persists runtime identity, port discovery, the selected hardware and serial profile, resolved
+capabilities/options, lifecycle and reconnect transitions, semantic command/response traffic, retry attempt timeouts,
+uncorrelated response metadata, status changes, protocol validation detail, and uncaught exceptions. It rotates at 5 MiB
+and retains seven files. Operators can open the active directory from **Event Log → Open log folder**.
 
 - Windows: `%LOCALAPPDATA%\\Qurkos\\AFC Gate Control Panel\\logs`
 - Linux: `${XDG_STATE_HOME:-~/.local/state}/afc-gate-control-panel/logs`
 - macOS: `~/Library/Logs/AFC Gate Control Panel`
 
-Collect these files with controller firmware, hardware profile, and incident time when escalating a fault. Do not add raw
-protocol frames, credentials, passenger identifiers, or ticket contents to application log messages.
+Collect the complete rotated set and incident time when escalating a fault; the files already contain controller firmware
+traffic, the hardware profile, and runtime context. Valid raw protocol frames, credentials, passenger identifiers, and
+ticket contents remain excluded. Rejected status payloads are logged as hex, while other malformed frames are truncated to
+128 bytes for bounded CRC/framing diagnosis.
 
 ## Troubleshooting
 

@@ -23,6 +23,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -148,11 +149,61 @@ class SerialSessionTest {
             Unit
         }
 
+    @Test
+    fun timeoutDiagnosticsRecordEveryAttemptTimeoutAndNextAction() =
+        runBlocking {
+            val events = mutableListOf<GateEvent>()
+            val transport = TestSerialTransport()
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 1, eventSink = events::add)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            val transaction = assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Firmware)).value
+
+            assertIs<GateResult.Failure>(session.transact(transaction))
+
+            val warnings = events.filterIsInstance<GateEvent.ProtocolWarning>().map { it.message }
+            assertTrue(warnings.any { it.contains("attempt=1/2") && it.contains("nextAction=retry") })
+            assertTrue(warnings.any { it.contains("attempt=2/2") && it.contains("nextAction=fail") })
+            assertTrue(warnings.all { it.contains("timeoutMs=30") })
+            session.disconnect()
+            Unit
+        }
+
+    @Test
+    fun uncorrelatedFrameDiagnosticIncludesSafeProtocolMetadata() =
+        runBlocking {
+            val events = mutableListOf<GateEvent>()
+            val transport =
+                TestSerialTransport { request, fake ->
+                    fake.sendRaw(
+                        PuloonFrameCodec.encode(
+                            PuloonFrame(request.sequence + 1, request.retry, "V0001.23".encodeToByteArray()),
+                        ),
+                    )
+                    fake.respond(request, "V0001.23".encodeToByteArray())
+                }
+            val adapter = PuloonAdapter(GateHardwareProfile(), maintenanceOperationsEnabled = false)
+            val session = createSession(transport, adapter, readRetries = 0, eventSink = events::add)
+            assertIs<GateResult.Success<Unit>>(session.connect())
+            val transaction = assertIs<GateResult.Success<SerialTransaction>>(adapter.transaction(GateOperation.Firmware)).value
+
+            assertIs<GateResult.Success<*>>(session.transact(transaction))
+
+            val warning = events.filterIsInstance<GateEvent.ProtocolWarning>().single().message
+            assertTrue(warning.contains("Discarded uncorrelated response"))
+            assertTrue(warning.contains("command=V"))
+            assertTrue(warning.contains("sequence=1"))
+            assertTrue(warning.contains("payloadBytes=8"))
+            session.disconnect()
+            Unit
+        }
+
     private fun createSession(
         transport: TestSerialTransport,
         adapter: PuloonAdapter,
         readRetries: Int,
         reconnect: Boolean = false,
+        eventSink: (GateEvent) -> Unit = {},
     ): SerialSession =
         SerialSession(
             serialConfig = SerialConnectionConfig(SerialPortName("fake"), adapter.defaultSerialParameters),
@@ -170,7 +221,7 @@ class SerialSessionTest {
                 ),
             adapter = adapter,
             transport = transport,
-            eventSink = {},
+            eventSink = eventSink,
             dispatcher = Dispatchers.Default,
         )
 }

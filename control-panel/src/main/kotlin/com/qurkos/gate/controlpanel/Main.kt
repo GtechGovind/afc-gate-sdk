@@ -19,7 +19,7 @@ import java.util.logging.Level
 fun main() {
     val logger = ApplicationLogging.logger("Main")
     ApplicationLogging.installUncaughtExceptionHandler()
-    logger.info("AFC Gate Control Panel starting")
+    logger.info("AFC Gate Control Panel starting ${ApplicationLogging.runtimeSummary()}")
     try {
         application {
             val controller = remember { ControlPanelController() }

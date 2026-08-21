@@ -80,10 +80,17 @@ internal sealed interface GateOperation {
     /** Read standby policy. */
     data object ReadStandbyPolicy : GateOperation
 
-    /** Standby-policy mutation. @property policy Complete requested policy. */
+    /**
+     * Standby-policy mutation.
+     *
+     * @property policy Complete requested policy.
+     * @property normalOpen Current controller door-mode setting used to validate the standby pass mode.
+     */
     data class SetStandbyPolicy(
         /** Complete requested standby policy. */
         val policy: GateStandbyPolicy,
+        /** Current normal-open setting. */
+        val normalOpen: Boolean,
     ) : GateOperation
 
     /** Read door timing. */

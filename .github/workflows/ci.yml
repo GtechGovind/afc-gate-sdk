@@ -14,6 +14,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version-policy:
+    name: Validate merge-request version
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source and base history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Require an incremented semantic version and changelog entry
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk -F= '$1 == "sdkVersion" { print $2 }' gradle.properties)"
+          base_version="$(git show "$BASE_SHA:gradle.properties" | awk -F= '$1 == "sdkVersion" { print $2 }')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$version" != "$base_version"
+          test "$(printf '%s\n%s\n' "$base_version" "$version" | sort -V | tail -n 1)" = "$version"
+          grep -q "^## $version - " CHANGELOG.md
+
   verify:
     name: Verify on JDK ${{ matrix.java }}
     runs-on: ubuntu-latest

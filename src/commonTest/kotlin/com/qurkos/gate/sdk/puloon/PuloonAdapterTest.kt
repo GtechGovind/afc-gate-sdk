@@ -100,7 +100,11 @@ class PuloonAdapterTest {
             val transport =
                 TestSerialTransport { request, fake ->
                     if (request.command == ascii('S')) {
-                        fake.respond(request, byteArrayOf(request.command, ascii('0'), ascii('0')) + baseStatus())
+                        fake.respond(
+                            request,
+                            byteArrayOf(request.command, ascii('0'), ascii('0')) +
+                                baseStatus().copyOfRange(0, 23),
+                        )
                     }
                 }
             val gate = createGate(transport, GateHardwareProfile(site = GateSite.INDIA), maintenance = false)
@@ -170,7 +174,7 @@ class PuloonAdapterTest {
         byteArrayOf(ascii('0')) + "0000".encodeToByteArray() +
             byteArrayOf(ascii('0'), ascii('0'), ascii('0'), 0x40, 0x80.toByte()) +
             "@@@00000000".encodeToByteArray() + byteArrayOf(ascii('0'), ascii('0')) +
-            "0000".encodeToByteArray()
+            byteArrayOf(0x00, 0x00) + "00000000".encodeToByteArray()
 
     private fun completeSettings(): Set<GateSetting> =
         setOf(

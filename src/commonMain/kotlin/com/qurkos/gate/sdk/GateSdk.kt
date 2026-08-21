@@ -76,9 +76,10 @@ public object GateSdk {
     private fun adapter(config: GateDeviceConfig): GateResult<com.qurkos.gate.sdk.internal.GateProtocolAdapter> =
         when (config.vendor) {
             GateVendor.PULOON -> {
-                if (config.hardware.mechanism == GateMechanism.FLAP) {
+                val invalidProfile = config.hardware.invalidPuloonProfileReason()
+                if (invalidProfile != null) {
                     GateResult.Failure(
-                        GateError.InvalidRequest("Puloon GCU supports SectorDoor or SwingDoor, not FLAP"),
+                        GateError.InvalidRequest(invalidProfile),
                     )
                 } else {
                     GateResult.Success(PuloonAdapter(config.hardware, config.maintenanceOperationsEnabled))
@@ -87,5 +88,18 @@ public object GateSdk {
             GateVendor.GUNNEBO,
             GateVendor.INDRA,
             -> GateResult.Failure(GateError.UnsupportedVendor(config.vendor))
+        }
+
+    private fun GateHardwareProfile.invalidPuloonProfileReason(): String? =
+        when {
+            mechanism == GateMechanism.FLAP -> "Puloon GCU supports SectorDoor or SwingDoor, not FLAP"
+            mechanism == GateMechanism.SWING && normalOpen -> "Puloon SwingDoor supports only normal-close mode"
+            GateModule.UPS in modules && site != GateSite.INDIA && site != GateSite.KOLKATA_INDIA ->
+                "Puloon UPS support is available only for India profiles"
+            GateModule.TOKEN_CONTROL_UNIT in modules && site != GateSite.INDIA && site != GateSite.KOLKATA_INDIA ->
+                "Puloon token-control-unit support is available only for India profiles"
+            GateModule.CHILD_SENSORS in modules && site != GateSite.CHINA ->
+                "Puloon child-sensor support is available only for the China profile"
+            else -> null
         }
 }

@@ -76,7 +76,7 @@ repositories {
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.qurkos.afc:afc-gate-sdk:1.0.2")
+            implementation("com.qurkos.afc:afc-gate-sdk:1.0.3")
         }
     }
 }

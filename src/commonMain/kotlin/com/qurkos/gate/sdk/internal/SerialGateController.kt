@@ -179,7 +179,7 @@ internal class SerialGateController(
 
     /** Delegates a non-retryable standby-policy write. */
     override suspend fun setStandbyPolicy(policy: GateStandbyPolicy): GateResult<Unit> =
-        acknowledge(GateOperation.SetStandbyPolicy(policy), GateCapability.STANDBY)
+        acknowledge(GateOperation.SetStandbyPolicy(policy, normalOpenMode), GateCapability.STANDBY)
 
     /** Executes a door-timing read. */
     override suspend fun readDoorTiming(): GateResult<GateDoorTiming> =

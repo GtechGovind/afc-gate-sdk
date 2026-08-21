@@ -317,9 +317,9 @@ internal object PuloonPayloadCodec {
         return decoded
     }
 
-    /** Resolves one hexadecimal mode character to the ordinal-stable common mode. */
+    /** Resolves the documented offset mode byte (`0x30..0x3F`) to the common mode. */
     private fun decodePassMode(byte: Byte): GatePassMode =
-        PASS_MODES.getOrNull(byte.toInt().toChar().digitToIntOrNull(HEX_BASE) ?: -1)
+        PASS_MODES.getOrNull((byte.toInt() and MAX_UNSIGNED_BYTE) - PASS_MODE_BASE)
             ?: throw IllegalArgumentException("Unknown Puloon pass mode")
 
     /** Strictly decodes a fixed-width decimal slice. */
@@ -373,6 +373,7 @@ internal object PuloonPayloadCodec {
     private const val HEX_BASE = 16
     private const val BITS_PER_NIBBLE = 4
     private const val MAX_UNSIGNED_BYTE = 0xFF
+    private const val PASS_MODE_BASE = 0x30
     private const val UPS_ONLINE_MASK = 0x08
     private const val UPS_BATTERY_MASK = 0x01
     private const val TOKEN_PATH_A_SENSOR_ID = 25

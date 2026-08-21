@@ -3,6 +3,7 @@ package com.qurkos.gate.sdk.puloon
 import com.qurkos.gate.sdk.GateHardwareProfile
 import com.qurkos.gate.sdk.GateMechanism
 import com.qurkos.gate.sdk.GateModule
+import com.qurkos.gate.sdk.GatePassMode
 import com.qurkos.gate.sdk.GateSetting
 import com.qurkos.gate.sdk.GateSite
 import com.qurkos.gate.sdk.internal.puloon.PuloonPayloadCodec
@@ -28,6 +29,22 @@ class PuloonPayloadValidationTest {
         assertFailsWith<IllegalArgumentException> {
             PuloonPayloadCodec.decodeStatus(badMode, GateHardwareProfile())
         }
+    }
+
+    @Test
+    fun statusDecodesEveryDocumentedOffsetPassModeByte() {
+        GatePassMode.entries.forEachIndexed { index, expected ->
+            val status = baseStatus().also { it[0] = (0x30 + index).toByte() }
+
+            assertEquals(expected, PuloonPayloadCodec.decodeStatus(status, GateHardwareProfile()).passMode)
+        }
+    }
+
+    @Test
+    fun standbyDecodesOutOfServiceOffsetPassModeByte() {
+        val standby = byteArrayOf(ascii('1'), ascii('1'), ascii('4'), ascii('3'), 0x3F)
+
+        assertEquals(GatePassMode.OUT_OF_SERVICE, PuloonPayloadCodec.decodeStandby(standby).passMode)
     }
 
     @Test

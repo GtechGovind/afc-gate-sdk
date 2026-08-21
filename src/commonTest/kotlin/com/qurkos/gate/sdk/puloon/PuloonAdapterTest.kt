@@ -160,7 +160,7 @@ class PuloonAdapterTest {
     private fun extensionResponse(request: ByteArray): ByteArray {
         if (request.getOrNull(1) != ascii('1')) return ByteArray(0)
         return when (request.copyOfRange(2, 6).decodeToString()) {
-            "2402" -> "1143F".encodeToByteArray()
+            "2402" -> byteArrayOf(ascii('1'), ascii('1'), ascii('4'), ascii('3'), 0x3F)
             "1102" -> byteArrayOf(ascii('1'), ascii('0'), ascii('5'), ascii('0'), ascii(':'))
             else -> error("Unexpected extension selector")
         }
